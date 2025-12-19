@@ -31,7 +31,7 @@ chat_router = Router(
         {
             "model_name": "openai",
             "litellm_params": {
-                "model": "openai/gpt-5-mini"
+                "model": "openai/gpt-5-mini",
             },
         },
         {
@@ -271,7 +271,7 @@ async def async_chat(
 
     if context.api_call_manager.get() and log:
         context.api_call_manager.get().response.append(content)
-# Extract and store usage information
+        # Extract and store usage information
         if hasattr(response, 'usage'):
             context.api_call_manager.get().usage = {
                 'prompt_tokens': response.usage.prompt_tokens,
