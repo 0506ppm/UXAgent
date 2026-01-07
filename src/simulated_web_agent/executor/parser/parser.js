@@ -286,8 +286,10 @@ const parse = () => {
     let clone = document.createElement(original.tagName);
     copyAllowed(original, clone);
 
-    // ✅ 新增：檢測刪除線樣式
+    // ✅ 統一在這裡宣告 computedStyle
     const computedStyle = window.getComputedStyle(original);
+
+    // ✅ 新增：檢測刪除線樣式
     if (computedStyle.textDecoration.includes("line-through")) {
       clone.setAttribute("parser-strikethrough", "true");
     }
@@ -307,8 +309,6 @@ const parse = () => {
     ) {
       clone.setAttribute("parser-price-type", "sale");
     }
-
-    const computedStyle = window.getComputedStyle(original);
 
     // Don't treat pointer-events: none as disabled
     // Overlay containers use pointer-events: none, but child elements override it
@@ -331,7 +331,6 @@ const parse = () => {
       }
 
       // Check for dialog/modal close classes
-      const classList = original.className || "";
       const classStr =
         typeof classList === "string" ? classList : classList.toString();
       if (
