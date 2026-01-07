@@ -6,19 +6,48 @@
 const parse = () => {
   /* ---------- globals --------------------------------------------------- */
   const BLACKLISTED_TAGS = new Set([
-    'script', 'style', 'link', 'meta', 'noscript', 'template',
-    'iframe', 'svg', 'canvas', 'picture', 'video', 'audio',
-    'object', 'embed'
+    "script",
+    "style",
+    "link",
+    "meta",
+    "noscript",
+    "template",
+    "iframe",
+    "svg",
+    "canvas",
+    "picture",
+    "video",
+    "audio",
+    "object",
+    "embed",
   ]);
 
   const ALLOWED_ATTR = new Set([
-    'id', 'type', 'name', 'value', 'placeholder',
-    'checked', 'disabled', 'readonly', 'alt', 'title',
-    'for', 'contenteditable', 'selected', 'multiple'
+    "id",
+    "type",
+    "name",
+    "value",
+    "placeholder",
+    "checked",
+    "disabled",
+    "readonly",
+    "alt",
+    "title",
+    "for",
+    "contenteditable",
+    "selected",
+    "multiple",
   ]);
 
   const PRESERVE_EMPTY_TAGS = new Set([
-    'input', 'select', 'textarea', 'button', 'img', 'head', 'title', 'form'
+    "input",
+    "select",
+    "textarea",
+    "button",
+    "img",
+    "head",
+    "title",
+    "form",
   ]);
 
   const USED_SEMANTIC_IDS = new Set();
@@ -28,8 +57,9 @@ const parse = () => {
     for (const a of src.attributes) {
       if (
         ALLOWED_ATTR.has(a.name) ||
-        (a.name.startsWith('aria-') && a.name === 'aria-label') ||
-        (a.name.startsWith('parser-') && (a.name === 'parser-clickable' || a.name === 'parser-semantic-id'))
+        (a.name.startsWith("aria-") && a.name === "aria-label") ||
+        (a.name.startsWith("parser-") &&
+          (a.name === "parser-clickable" || a.name === "parser-semantic-id"))
       ) {
         dst.setAttribute(a.name, a.value);
       }
@@ -37,11 +67,16 @@ const parse = () => {
   };
 
   const slug = (t) =>
-    t.toLowerCase().replace(/\s+/g, ' ').trim()
-      .replace(/[^\w]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 20);
+    t
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/[^\w]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 20);
 
   const uniqueName = (base) => {
-    let name = base || 'item';
+    let name = base || "item";
     if (!USED_SEMANTIC_IDS.has(name)) {
       USED_SEMANTIC_IDS.add(name);
       return name;
@@ -56,19 +91,22 @@ const parse = () => {
     if (PRESERVE_EMPTY_TAGS.has(el.tagName.toLowerCase())) return false;
 
     // Preserve overlay, dialog, and notification containers even if temporarily empty
-    const classList = el.className || '';
-    const classStr = typeof classList === 'string' ? classList : classList.toString();
-    if (classStr.includes('cdk-overlay') ||
-        classStr.includes('mat-dialog') ||
-        classStr.includes('modal') ||
-        classStr.includes('dialog') ||
-        classStr.includes('toast') ||
-        classStr.includes('alert') ||
-        classStr.includes('notification') ||
-        classStr.includes('snackbar') ||
-        classStr.includes('block-ui') ||
-        classStr.includes('message-container') ||
-        classStr.includes('popup')) {
+    const classList = el.className || "";
+    const classStr =
+      typeof classList === "string" ? classList : classList.toString();
+    if (
+      classStr.includes("cdk-overlay") ||
+      classStr.includes("mat-dialog") ||
+      classStr.includes("modal") ||
+      classStr.includes("dialog") ||
+      classStr.includes("toast") ||
+      classStr.includes("alert") ||
+      classStr.includes("notification") ||
+      classStr.includes("snackbar") ||
+      classStr.includes("block-ui") ||
+      classStr.includes("message-container") ||
+      classStr.includes("popup")
+    ) {
       return false;
     }
 
@@ -82,19 +120,21 @@ const parse = () => {
   const isVisible = (el) => {
     // Always treat overlay/dialog/notification containers as visible even if opacity is 0
     // They may be animating in, temporarily hidden, or contain visible children
-    const classList = el.className || '';
-    const classStr = typeof classList === 'string' ? classList : classList.toString();
-    const isDynamicContainer = classStr.includes('cdk-overlay') ||
-                                classStr.includes('mat-dialog') ||
-                                classStr.includes('modal') ||
-                                classStr.includes('dialog') ||
-                                classStr.includes('toast') ||
-                                classStr.includes('alert') ||
-                                classStr.includes('notification') ||
-                                classStr.includes('snackbar') ||
-                                classStr.includes('block-ui') ||
-                                classStr.includes('message-container') ||
-                                classStr.includes('popup');
+    const classList = el.className || "";
+    const classStr =
+      typeof classList === "string" ? classList : classList.toString();
+    const isDynamicContainer =
+      classStr.includes("cdk-overlay") ||
+      classStr.includes("mat-dialog") ||
+      classStr.includes("modal") ||
+      classStr.includes("dialog") ||
+      classStr.includes("toast") ||
+      classStr.includes("alert") ||
+      classStr.includes("notification") ||
+      classStr.includes("snackbar") ||
+      classStr.includes("block-ui") ||
+      classStr.includes("message-container") ||
+      classStr.includes("popup");
 
     if (isDynamicContainer) {
       // Always treat dynamic containers as visible
@@ -105,8 +145,8 @@ const parse = () => {
 
     const style = window.getComputedStyle(el);
     const hidden =
-      style.display === 'none' ||
-      style.visibility === 'hidden' ||
+      style.display === "none" ||
+      style.visibility === "hidden" ||
       parseFloat(style.opacity) === 0;
 
     const zeroSize = el.offsetWidth === 0 && el.offsetHeight === 0;
@@ -115,15 +155,22 @@ const parse = () => {
     const scrollLeft = window.scrollX || document.documentElement.scrollLeft;
     const right = rect.right;
     const top = rect.top;
-    const outOfPort = (right + scrollLeft < 0);
+    const outOfPort = right + scrollLeft < 0;
 
     let belowPortNotScrollable = false;
-    if (top > window.innerHeight && !(document.documentElement.scrollHeight > window.innerHeight)) {
+    if (
+      top > window.innerHeight &&
+      !(document.documentElement.scrollHeight > window.innerHeight)
+    ) {
       let hasScrollableAncestor = false;
       for (let p = el?.parentElement; p; p = p.parentElement) {
         const cs = getComputedStyle(p);
-        const canScrollY = /(auto|scroll)/.test(cs.overflowY) && p.scrollHeight > p.clientHeight;
-        if (canScrollY) { hasScrollableAncestor = true; break; }
+        const canScrollY =
+          /(auto|scroll)/.test(cs.overflowY) && p.scrollHeight > p.clientHeight;
+        if (canScrollY) {
+          hasScrollableAncestor = true;
+          break;
+        }
       }
       belowPortNotScrollable = !hasScrollableAncestor;
     }
@@ -152,7 +199,10 @@ const parse = () => {
     let node = walker.currentNode;
 
     while (node) {
-      if (node.tagName.toLowerCase() === 'span' && !node.hasAttribute('parser-semantic-id')) {
+      if (
+        node.tagName.toLowerCase() === "span" &&
+        !node.hasAttribute("parser-semantic-id")
+      ) {
         spansToUnwrap.push(node);
       }
       node = walker.nextNode();
@@ -180,16 +230,23 @@ const parse = () => {
       const c = child.tagName.toLowerCase();
 
       // Keep only one child if tags are the same (e.g., span > span, div > div)
-      if (p === c && p !== 'body' && p !== 'html' && p !== 'head' && p !== 'title') {
+      if (
+        p === c &&
+        p !== "body" &&
+        p !== "html" &&
+        p !== "head" &&
+        p !== "title"
+      ) {
         pullUpChild(el, child);
         continue;
       }
 
       // Original logic for div handling
-      if (p !== 'div' && c !== 'div') break;
-      el = (p === 'div' && c !== 'div')
-        ? replaceElement(el, child.tagName, child)
-        : (pullUpChild(el, child), el);
+      if (p !== "div" && c !== "div") break;
+      el =
+        p === "div" && c !== "div"
+          ? replaceElement(el, child.tagName, child)
+          : (pullUpChild(el, child), el);
     }
     return el;
   };
@@ -199,7 +256,7 @@ const parse = () => {
     const clearParserAttrs = (el) => {
       if (!el || !el.attributes) return;
       for (const a of Array.from(el.attributes)) {
-        if (a.name.startsWith('parser-')) el.removeAttribute(a.name);
+        if (a.name.startsWith("parser-")) el.removeAttribute(a.name);
       }
     };
 
@@ -215,9 +272,12 @@ const parse = () => {
     }
   })();
 
-
   /* ==================================================================== */
-  function automaticStripElement(original, parentName = '', parentIsClickable = false) {
+  function automaticStripElement(
+    original,
+    parentName = "",
+    parentIsClickable = false
+  ) {
     if (!original || original.nodeType !== 1) return null;
     const tag = original.tagName.toLowerCase();
     if (BLACKLISTED_TAGS.has(tag)) return null;
@@ -226,44 +286,73 @@ const parse = () => {
     let clone = document.createElement(original.tagName);
     copyAllowed(original, clone);
 
+    // ✅ 新增：檢測刪除線樣式
+    const computedStyle = window.getComputedStyle(original);
+    if (computedStyle.textDecoration.includes("line-through")) {
+      clone.setAttribute("parser-strikethrough", "true");
+    }
+
+    // ✅ 新增：檢測價格相關的 class
+    const classList = original.className || "";
+    if (
+      classList.includes("original-price") ||
+      classList.includes("old-price") ||
+      classList.includes("was-price")
+    ) {
+      clone.setAttribute("parser-price-type", "original");
+    } else if (
+      classList.includes("sale-price") ||
+      classList.includes("discount-price") ||
+      classList.includes("current-price")
+    ) {
+      clone.setAttribute("parser-price-type", "sale");
+    }
+
     const computedStyle = window.getComputedStyle(original);
 
     // Don't treat pointer-events: none as disabled
     // Overlay containers use pointer-events: none, but child elements override it
-    const isDisabled = original.disabled || original.hasAttribute('disabled');
+    const isDisabled = original.disabled || original.hasAttribute("disabled");
 
     const probablyClickable = (() => {
-      if (['button', 'select', 'summary', 'area', 'input'].includes(tag)) return true;
-      if (tag === 'a' && original.hasAttribute('href')) return true;
-      if (original.hasAttribute('onclick')) return true;
+      if (["button", "select", "summary", "area", "input"].includes(tag))
+        return true;
+      if (tag === "a" && original.hasAttribute("href")) return true;
+      if (original.hasAttribute("onclick")) return true;
 
       // Material Dialog close buttons and similar interactive elements
-      if (original.hasAttribute('mat-dialog-close') ||
-          original.hasAttribute('dialog-close') ||
-          original.hasAttribute('data-dismiss') ||
-          original.hasAttribute('data-bs-dismiss')) {
+      if (
+        original.hasAttribute("mat-dialog-close") ||
+        original.hasAttribute("dialog-close") ||
+        original.hasAttribute("data-dismiss") ||
+        original.hasAttribute("data-bs-dismiss")
+      ) {
         return true;
       }
 
       // Check for dialog/modal close classes
-      const classList = original.className || '';
-      const classStr = typeof classList === 'string' ? classList : classList.toString();
-      if (classStr.includes('dialog-close') ||
-          classStr.includes('modal-close') ||
-          classStr.includes('close-button')) {
+      const classList = original.className || "";
+      const classStr =
+        typeof classList === "string" ? classList : classList.toString();
+      if (
+        classStr.includes("dialog-close") ||
+        classStr.includes("modal-close") ||
+        classStr.includes("close-button")
+      ) {
         return true;
       }
 
-      const r = original.getAttribute('role');
-      if (['button', 'link', 'checkbox', 'radio', 'option'].includes(r)) return true;
+      const r = original.getAttribute("role");
+      if (["button", "link", "checkbox", "radio", "option"].includes(r))
+        return true;
 
       // Check if child has cursor pointer (for buttons with icon children)
-      if (computedStyle.cursor === 'pointer') return true;
+      if (computedStyle.cursor === "pointer") return true;
 
       // Check if any immediate child has cursor pointer
       for (const child of original.children) {
         const childStyle = window.getComputedStyle(child);
-        if (childStyle.cursor === 'pointer') return true;
+        if (childStyle.cursor === "pointer") return true;
       }
 
       return false;
@@ -271,59 +360,74 @@ const parse = () => {
 
     // Force clickable for buttons and links even if parent is clickable
     // This ensures navigation links and buttons always have their own semantic IDs
-    const forceClickable = (tag === 'button' && !isDisabled) ||
-                           (tag === 'a' && original.hasAttribute('href'));
-    const isClickable = ((!parentIsClickable && probablyClickable && !isDisabled) || forceClickable);
+    const forceClickable =
+      (tag === "button" && !isDisabled) ||
+      (tag === "a" && original.hasAttribute("href"));
+    const isClickable =
+      (!parentIsClickable && probablyClickable && !isDisabled) ||
+      forceClickable;
 
-    let thisName = '';
+    let thisName = "";
     if (isClickable) {
-      const base = slug((original.innerText || '').trim() ||
-        original.getAttribute('title') ||
-        original.getAttribute('placeholder') ||
-        tag);
+      const base = slug(
+        (original.innerText || "").trim() ||
+          original.getAttribute("title") ||
+          original.getAttribute("placeholder") ||
+          tag
+      );
       thisName = uniqueName(parentName ? `${parentName}.${base}` : base);
       for (const e of [clone, original]) {
-        e.setAttribute('parser-semantic-id', thisName);
-        e.setAttribute('parser-clickable', 'true');
+        e.setAttribute("parser-semantic-id", thisName);
+        e.setAttribute("parser-clickable", "true");
       }
     }
 
     if (original.closest('[parser-maybe-hoverable="true"]')) {
-      clone.setAttribute('parser-maybe-hoverable', 'true');
-      original.setAttribute('parser-maybe-hoverable', 'true');
+      clone.setAttribute("parser-maybe-hoverable", "true");
+      original.setAttribute("parser-maybe-hoverable", "true");
     }
 
-    if (tag === 'input' || tag === 'textarea' || original.hasAttribute('contenteditable')) {
+    if (
+      tag === "input" ||
+      tag === "textarea" ||
+      original.hasAttribute("contenteditable")
+    ) {
       const inputIsDisabled = original.disabled || original.readOnly;
       if (!inputIsDisabled && !thisName) {
-        const base = slug((original.getAttribute('placeholder') ||
-          original.getAttribute('name') ||
-          original.value || '').trim() || tag);
+        const base = slug(
+          (
+            original.getAttribute("placeholder") ||
+            original.getAttribute("name") ||
+            original.value ||
+            ""
+          ).trim() || tag
+        );
         thisName = uniqueName(parentName ? `${parentName}.${base}` : base);
       }
       if (!inputIsDisabled && thisName) {
-        clone.setAttribute('parser-semantic-id', thisName);
-        clone.setAttribute('value', original.value || '');
-        original.setAttribute('parser-semantic-id', thisName);
+        clone.setAttribute("parser-semantic-id", thisName);
+        clone.setAttribute("value", original.value || "");
+        original.setAttribute("parser-semantic-id", thisName);
       }
     }
 
-    if (tag === 'select') {
-      const selectIsDisabled = original.disabled || original.hasAttribute('disabled');
+    if (tag === "select") {
+      const selectIsDisabled =
+        original.disabled || original.hasAttribute("disabled");
       if (!selectIsDisabled) {
         if (!thisName) {
-          const base = slug((original.getAttribute('name') || tag));
+          const base = slug(original.getAttribute("name") || tag);
           thisName = uniqueName(parentName ? `${parentName}.${base}` : base);
         }
-        clone.setAttribute('parser-semantic-id', thisName);
-        original.setAttribute('parser-semantic-id', thisName);
-        for (const opt of original.querySelectorAll('option')) {
-          const o = document.createElement('option');
+        clone.setAttribute("parser-semantic-id", thisName);
+        original.setAttribute("parser-semantic-id", thisName);
+        for (const opt of original.querySelectorAll("option")) {
+          const o = document.createElement("option");
           o.textContent = opt.textContent.trim();
-          o.setAttribute('value', opt.value);
+          o.setAttribute("value", opt.value);
           const optName = uniqueName(`${thisName}.${slug(opt.textContent)}`);
-          o.setAttribute('parser-semantic-id', optName);
-          opt.setAttribute('parser-semantic-id', optName);
+          o.setAttribute("parser-semantic-id", optName);
+          opt.setAttribute("parser-semantic-id", optName);
           clone.appendChild(o);
         }
       }
@@ -335,7 +439,7 @@ const parse = () => {
         thisName || parentName,
         parentIsClickable || isClickable
       );
-      if (cleaned && (!isEmpty(cleaned))) {
+      if (cleaned && !isEmpty(cleaned)) {
         clone.appendChild(cleaned);
       }
     }
@@ -362,28 +466,38 @@ const parse = () => {
   result = unwrapUselessSpans(result);
   return {
     html: result.outerHTML,
-    clickable_elements: Array.from(result.querySelectorAll('[parser-clickable="true"]'))
-      .map(el => el.getAttribute('parser-semantic-id')),
-    hoverable_elements: Array.from(result.querySelectorAll('[parser-maybe-hoverable="true"]'))
-      .map(el => el.getAttribute('parser-semantic-id')),
-    input_elements: Array.from(result.querySelectorAll('input[parser-semantic-id], textarea[parser-semantic-id], [contenteditable][parser-semantic-id]'))
-      .map(el => ({
-        id: el.getAttribute('parser-semantic-id'),
-        disabled: el.hasAttribute('parser-input-disabled'),
-        type: el.getAttribute('type') || (el.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'contenteditable'),
-        value: el.value || el.textContent,
-        canEdit: el.getAttribute('parser-can-edit') === 'true',
-        isFocused: el.getAttribute('parser-is-focused') === 'true'
-      })),
-    select_elements: Array.from(result.querySelectorAll('select[parser-semantic-id]'))
-      .map(el => ({
-        id: el.getAttribute('parser-semantic-id'),
-        value: el.value,
-        selectedIndex: el.selectedIndex,
-        multiple: el.multiple,
-        selectedValues: Array.from(el.selectedOptions).map(opt => opt.value)
-      })),
+    clickable_elements: Array.from(
+      result.querySelectorAll('[parser-clickable="true"]')
+    ).map((el) => el.getAttribute("parser-semantic-id")),
+    hoverable_elements: Array.from(
+      result.querySelectorAll('[parser-maybe-hoverable="true"]')
+    ).map((el) => el.getAttribute("parser-semantic-id")),
+    input_elements: Array.from(
+      result.querySelectorAll(
+        "input[parser-semantic-id], textarea[parser-semantic-id], [contenteditable][parser-semantic-id]"
+      )
+    ).map((el) => ({
+      id: el.getAttribute("parser-semantic-id"),
+      disabled: el.hasAttribute("parser-input-disabled"),
+      type:
+        el.getAttribute("type") ||
+        (el.tagName.toLowerCase() === "textarea"
+          ? "textarea"
+          : "contenteditable"),
+      value: el.value || el.textContent,
+      canEdit: el.getAttribute("parser-can-edit") === "true",
+      isFocused: el.getAttribute("parser-is-focused") === "true",
+    })),
+    select_elements: Array.from(
+      result.querySelectorAll("select[parser-semantic-id]")
+    ).map((el) => ({
+      id: el.getAttribute("parser-semantic-id"),
+      value: el.value,
+      selectedIndex: el.selectedIndex,
+      multiple: el.multiple,
+      selectedValues: Array.from(el.selectedOptions).map((opt) => opt.value),
+    })),
   };
-}
+};
 
 parse();
