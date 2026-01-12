@@ -463,6 +463,27 @@ const parse = () => {
   let result = automaticStripElement(document.documentElement);
   // Unwrap all span tags without semantic-id to reduce HTML size
   result = unwrapUselessSpans(result);
+
+  // 檢索 toast 訊息和購物車變化
+  let toastInfo = {
+    messages: [],
+    cartChanges: [],
+    summary: {
+      totalToasts: 0,
+      visibleToasts: 0,
+      cartChanged: false,
+      latestCartCount: 0,
+    },
+  };
+
+  if (typeof window.__getToastMessages === "function") {
+    try {
+      toastInfo = window.__getToastMessages();
+    } catch (e) {
+      console.warn("Failed to get toast messages:", e);
+    }
+  }
+
   return {
     html: result.outerHTML,
     clickable_elements: Array.from(

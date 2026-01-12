@@ -40,6 +40,52 @@ INCLUDE EVERY DETAIL ON THE WEB PAGE, as much as possible. at least include all 
 
 ---
 
+## **CRITICAL: Toast Messages and Cart Changes**
+
+**When toast messages or cart changes are present, you MUST describe them FIRST and PROMINENTLY in your observation.**
+
+The environment data includes:
+- `toast_messages`: Array of temporary messages that appeared (usually success/error notifications)
+- `cart_changes`: Array of shopping cart count changes
+- `toast_summary`: Summary including total toasts, cart status, latest cart count
+
+**Example of how to describe toast messages:**
+
+If `toast_messages` contains:
+```json
+[{
+  "text": "商品已成功加入購物車",
+  "timestamp": "2026-01-12T10:30:15.123Z",
+  "visible": false
+}]
+```
+
+And `cart_changes` contains:
+```json
+[{
+  "from": 0,
+  "to": 1,
+  "timestamp": "2026-01-12T10:30:15.100Z"
+}]
+```
+
+**You MUST start your observation with:**
+"剛才的操作觸發了成功訊息「商品已成功加入購物車」（已消失），購物車數量從 0 變成 1。[then continue with the rest of the page description...]"
+
+**Key Points:**
+1. **Always check `toast_messages` and `cart_changes` FIRST**
+2. **Describe them at the START of your observation** if they exist
+3. **Explicitly state the cart count change** (from X to Y)
+4. **Mention if the toast is no longer visible** (visible: false)
+5. This helps the agent understand the **result of its last action**
+
+**Example observation structure:**
+```
+"剛才點擊『加入購物車』後，出現了綠色成功提示「✓ 已成功加入購物車」（現已消失），同時購物車圖示旁的數量徽章從『0』變成『1』。頁面仍顯示商品詳情頁，標題為...[continue with full page description]"
+```
+
+---
+
 ## Special Note: Price Recognition
 
 When describing prices on the page, pay attention to these HTML attributes that indicate price types:
