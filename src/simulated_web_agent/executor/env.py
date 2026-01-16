@@ -754,6 +754,7 @@ class WebAgentEnv:
     async def click(self, semantic_id: str) -> None:
         """
         Click on an element identified by its semantic ID.
+        Automatically handles new tabs opened by target="_blank" links.
 
         Args:
             semantic_id: The parser-semantic-id of the element to click
@@ -765,8 +766,60 @@ class WebAgentEnv:
         async with ElementHighlight(semantic_id, sleep=0.5, center=False):
             selector = f'[parser-semantic-id="{semantic_id}"]'
             element = self.page.locator(selector)
-            await element.click()
-            self.logger.info(f"Clicked element: {semantic_id}")
+            
+            # 記錄點擊前的狀態
+            pages_before = len(self.context.pages)
+            url_before = self.page.url
+            
+            # 設置新分頁監聽器
+            new_page = None
+            new_page_event = asyncio.Event()
+            
+            def handle_new_page(page):
+                nonlocal new_page
+                new_page = page
+                new_page_event.set()
+            
+            self.context.on("page", handle_new_page)
+            
+            try:
+                # 執行點擊
+                await element.click()
+                
+                # 等待可能的新分頁或頁面變化（最多 2 秒）
+                try:
+                    await asyncio.wait_for(new_page_event.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    pass  # 沒有新分頁也沒關係
+                
+                # 檢查是否有新分頁
+                pages_after = len(self.context.pages)
+                
+                if pages_after > pages_before and new_page:
+                    self.logger.info(f"🔄 Detected new tab opened, switching...")
+                    
+                    # 等待新分頁載入
+                    await new_page.wait_for_load_state("domcontentloaded")
+                    
+                    # 切換到新分頁
+                    old_page = self.page
+                    self.page = new_page
+                    
+                    self.logger.info(f"✅ Switched to new tab: {self.page.url}")
+                    
+                    # 可選：關閉舊分頁以節省資源
+                    # await old_page.close()
+                    # self.logger.info(f"🗑️ Closed old tab: {url_before}")
+                    
+                elif self.page.url != url_before:
+                    # URL 改變但沒有新分頁（正常導航）
+                    self.logger.info(f"🔄 Page navigated: {url_before} → {self.page.url}")
+                
+                self.logger.info(f"Clicked element: {semantic_id}")
+                
+            finally:
+                # 移除監聽器
+                self.context.remove_listener("page", handle_new_page)
 
     async def mouse_move(self, x: int, y: int) -> None:
         """
@@ -1178,7 +1231,7 @@ class WebAgentEnv:
         #     self.logger.warning(f"Body element not found: {e}")
 
         if parser_script_path.exists():
-            with open(parser_script_path) as f:
+            with open(parser_script_path, "r", encoding="utf-8") as f:
                 parser_code = f.read()
             try:
                 content = await self.page.evaluate(parser_code)
