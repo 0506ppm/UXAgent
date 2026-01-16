@@ -484,6 +484,38 @@ const parse = () => {
     }
   }
 
+  // ========== 檢索視口和錨點追蹤資訊 ==========
+  let viewportInfo = {
+    scrollY: 0,
+    scrollChanged: false,
+    scrollHistory: [],
+    currentHash: "",
+    hashHistory: [],
+    anchorClicks: [],
+    recentAnchorClick: null,
+    visibleElements: [],
+    viewportHeight: 0,
+  };
+
+  if (typeof window.__getViewportInfo === "function") {
+    try {
+      viewportInfo = window.__getViewportInfo();
+    } catch (e) {
+      console.warn("Failed to get viewport info:", e);
+    }
+  }
+
+  // 清除滾動變化標記（避免重複報告）
+  if (typeof window.__clearScrollChanged === "function") {
+    try {
+      window.__clearScrollChanged();
+    } catch (e) {
+      console.warn("Failed to clear scroll changed flag:", e);
+    }
+  }
+
+  // ========== 回傳 ==========
+
   return {
     html: result.outerHTML,
     clickable_elements: Array.from(
@@ -517,6 +549,10 @@ const parse = () => {
       multiple: el.multiple,
       selectedValues: Array.from(el.selectedOptions).map((opt) => opt.value),
     })),
+    toast_messages: toastInfo.messages,
+    cart_changes: toastInfo.cartChanges,
+    toast_summary: toastInfo.summary,
+    viewport_info: viewportInfo,
   };
 };
 

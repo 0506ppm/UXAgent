@@ -40,6 +40,83 @@ INCLUDE EVERY DETAIL ON THE WEB PAGE, as much as possible. at least include all 
 
 ---
 
+## **CRITICAL: Viewport Changes and Anchor Navigation**
+
+**When the page scrolls or anchor links are clicked, you MUST describe the viewport change in your observation.**
+
+The environment data includes:
+- `viewport_info.recentAnchorClick`: Most recent anchor link click (e.g., "詳細說明", "商品規格")
+- `viewport_info.scrollChanged`: Whether the page scrolled since last observation
+- `viewport_info.scrollHistory`: Array of scroll events
+- `viewport_info.visibleElements`: Array of elements currently visible in the viewport
+- `viewport_info.currentHash`: Current URL hash (e.g., "#salepage-detail-info")
+
+**When anchor navigation occurs (e.g., clicking "詳細說明" tab):**
+
+Many websites use anchor links (href="#xxx") for tab-like navigation within the same page. The DOM doesn't change, but the user's view changes.
+
+If `viewport_info.recentAnchorClick` exists:
+```json
+{
+  "linkText": "詳細說明",
+  "href": "#salepage-detail-info",
+  "scrollDelta": 1150,
+  "isNavTab": true
+}
+```
+
+**You MUST describe it as:**
+"點擊『詳細說明』標籤後，頁面平滑滾動至產品詳情區段，向下移動約 1150 像素。現在顯示 [describe visible content from visibleElements]..."
+
+**Key Points:**
+
+1. **Check `viewport_info.recentAnchorClick` FIRST** - If present, this means anchor navigation just occurred
+2. **Describe the scroll direction and distance** - Use `scrollDelta` (positive = down, negative = up)
+3. **Describe what's NOW VISIBLE** - Use `visibleElements` to know what user currently sees
+4. **Mention the tab/link that was clicked** - Use `linkText`
+5. **DON'T say "nothing changed"** - The viewport changed even though DOM didn't!
+
+**Example Scenarios:**
+
+**Scenario 1: Clicking "詳細說明" (Details) tab**
+```
+"點擊『詳細說明』標籤後，頁面向下平滑滾動約 800 像素，跳轉到產品詳細說明區段。現在看到標題『產品詳細說明』，內容包括：製作工法（採用 12 小時古法慢燉）、營養成分表（每 100ml 含蛋白質 8.5g）、適用族群說明等。頁面頂部仍顯示『詳細說明』、『商品規格』、『相關推薦』等導航標籤。"
+```
+
+**Scenario 2: Clicking "商品規格" (Specifications) tab**
+```
+"點擊『商品規格』標籤後，頁面向下滾動約 1200 像素，移動到商品規格表格區段。現在顯示完整的產品規格，包括：品名（滴雞精）、成分（雞肉萃取物）、容量（60ml/包）、保存方式（常溫保存）、有效期限（18 個月）等資訊。"
+```
+
+**Scenario 3: Clicking "相關推薦" (Recommendations) tab**
+```
+"點擊『相關推薦』標籤後，頁面向下滾動約 1500 像素，跳轉到推薦商品區段。現在看到多個推薦商品卡片，包括：[describe the recommended products visible]..."
+```
+
+**When to describe viewport changes:**
+
+✅ **DO describe when:**
+- `recentAnchorClick` is not null (anchor link was clicked)
+- `scrollChanged` is true (page scrolled significantly)
+- `visibleElements` shows different content than before
+
+❌ **DON'T describe when:**
+- No viewport change occurred
+- Only minor scroll adjustments (< 50px)
+
+**Template for anchor navigation:**
+```
+"點擊『[linkText]』標籤後，頁面[向下/向上]滾動約 [scrollDelta] 像素，[跳轉到/移動到][目標區段描述]。現在顯示 [describe visibleElements content]..."
+```
+
+**Important Notes:**
+1. Anchor navigation is VERY COMMON in e-commerce sites for product tabs
+2. The DOM remains unchanged - only the viewport moves
+3. Focus on describing **what the user NOW SEES**, not the entire page
+4. This helps the agent understand that clicking tabs **did work** even though HTML is the same
+
+---
+
 ## **CRITICAL: Toast Messages and Cart Changes**
 
 **When toast messages or cart changes are present, you MUST describe them FIRST and PROMINENTLY in your observation.**

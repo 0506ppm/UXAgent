@@ -1231,7 +1231,7 @@ class WebAgentEnv:
         #     self.logger.warning(f"Body element not found: {e}")
 
         if parser_script_path.exists():
-            with open(parser_script_path) as f:
+            with open(parser_script_path, "r", encoding="utf-8") as f:
                 parser_code = f.read()
             try:
                 content = await self.page.evaluate(parser_code)

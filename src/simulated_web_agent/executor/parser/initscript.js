@@ -522,7 +522,197 @@
     window.__cartCountChanges = [];
   };
 
+  // ========== 🆕 Anchor Link and Viewport Tracking ==========
+
+  // 初始化滾動追蹤
+  window.__scrollTracking = {
+    lastScrollY: window.scrollY,
+    scrollChanged: false,
+    scrollHistory: [],
+    anchorClicks: [],
+  };
+
+  // 監聽錨點連結的點擊（針對 data-du-smooth-scroll）
+  document.addEventListener(
+    "click",
+    function (e) {
+      let target = e.target;
+
+      // 向上尋找 <a> 標籤
+      while (target && target.tagName !== "A") {
+        target = target.parentElement;
+      }
+
+      if (target && target.tagName === "A") {
+        const href = target.getAttribute("href");
+
+        // 檢查是否為錨點連結（以 # 開頭）
+        if (href && href.startsWith("#")) {
+          const anchorId = href.substring(1);
+          const targetElement = document.getElementById(anchorId);
+          const linkText = target.textContent.trim();
+
+          console.log(`🔗 點擊錨點連結: ${href} (${linkText})`);
+
+          // 記錄錨點點擊
+          const clickRecord = {
+            href: href,
+            anchorId: anchorId,
+            targetExists: !!targetElement,
+            scrollBefore: window.scrollY,
+            timestamp: new Date().toISOString(),
+            linkText: linkText,
+            // 記錄娘家網站特有的屬性
+            hasSmoothScroll:
+              target.hasAttribute("data-du-smooth-scroll") ||
+              target.hasAttribute("data-smooth-scroll"),
+            hasScrollspy: target.hasAttribute("data-du-scrollspy"),
+            offset: target.getAttribute("data-offset"),
+            // 記錄是否為導航標籤
+            isNavTab: target.classList.contains("nav-tab-link"),
+          };
+
+          window.__scrollTracking.anchorClicks.push(clickRecord);
+
+          // 延遲檢查滾動結果（等待平滑滾動完成）
+          setTimeout(() => {
+            const lastClick =
+              window.__scrollTracking.anchorClicks[
+                window.__scrollTracking.anchorClicks.length - 1
+              ];
+            if (lastClick === clickRecord) {
+              lastClick.scrollAfter = window.scrollY;
+              lastClick.scrollDelta = window.scrollY - lastClick.scrollBefore;
+
+              console.log(
+                `📜 錨點跳轉完成: ${lastClick.linkText} (滾動 ${lastClick.scrollDelta}px)`
+              );
+
+              // 如果有明顯滾動，標記為已改變
+              if (Math.abs(lastClick.scrollDelta) > 50) {
+                window.__scrollTracking.scrollChanged = true;
+              }
+            }
+          }, 1000); // 等待 1 秒讓平滑滾動完成
+        }
+      }
+    },
+    true
+  ); // 使用 capture phase
+
+  // 監聽滾動事件
+  let scrollTimeout;
+  window.addEventListener("scroll", () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      const currentScrollY = window.scrollY;
+      const scrollDelta = currentScrollY - window.__scrollTracking.lastScrollY;
+
+      if (Math.abs(scrollDelta) > 100) {
+        window.__scrollTracking.scrollChanged = true;
+        window.__scrollTracking.scrollHistory.push({
+          from: window.__scrollTracking.lastScrollY,
+          to: currentScrollY,
+          delta: scrollDelta,
+          timestamp: new Date().toISOString(),
+        });
+
+        console.log(
+          `📜 頁面滾動: ${
+            window.__scrollTracking.lastScrollY
+          } → ${currentScrollY} (${
+            scrollDelta > 0 ? "向下" : "向上"
+          } ${Math.abs(scrollDelta)}px)`
+        );
+
+        window.__scrollTracking.lastScrollY = currentScrollY;
+      }
+    }, 200);
+  });
+
+  // 監聽 hash 變化（備用）
+  window.__hashChangeHistory = [];
+  window.addEventListener("hashchange", (event) => {
+    console.log(`🔗 Hash 變化: ${event.oldURL} → ${event.newURL}`);
+
+    window.__hashChangeHistory.push({
+      oldURL: event.oldURL,
+      newURL: event.newURL,
+      oldHash: new URL(event.oldURL).hash,
+      newHash: new URL(event.newURL).hash,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // 提供視口資訊檢索函數
+  window.__getViewportInfo = function () {
+    const viewportHeight = window.innerHeight;
+    const scrollY = window.scrollY;
+
+    // 找出視口中可見的重要元素
+    const allElements = document.querySelectorAll(
+      "h1, h2, h3, h4, h5, h6, section[id], div[id], p"
+    );
+    const visibleElements = [];
+
+    allElements.forEach((el) => {
+      const rect = el.getBoundingClientRect();
+      const visibleRatio = Math.max(
+        0,
+        Math.min(
+          1,
+          (Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0)) /
+            rect.height
+        )
+      );
+
+      // 至少 30% 可見
+      if (visibleRatio > 0.3) {
+        const text = el.textContent.trim();
+        if (text.length > 0) {
+          // 過濾空元素
+          visibleElements.push({
+            tag: el.tagName,
+            id: el.id,
+            class: el.className,
+            text: text.substring(0, 150), // 取前 150 字元
+            visibleRatio: visibleRatio.toFixed(2),
+          });
+        }
+      }
+    });
+
+    // 找出最近點擊的錨點連結
+    const recentAnchorClick =
+      window.__scrollTracking.anchorClicks.length > 0
+        ? window.__scrollTracking.anchorClicks[
+            window.__scrollTracking.anchorClicks.length - 1
+          ]
+        : null;
+
+    return {
+      scrollY: scrollY,
+      scrollChanged: window.__scrollTracking.scrollChanged,
+      scrollHistory: window.__scrollTracking.scrollHistory.slice(-5), // 只保留最近 5 次
+      currentHash: window.location.hash,
+      hashHistory: window.__hashChangeHistory,
+      anchorClicks: window.__scrollTracking.anchorClicks,
+      recentAnchorClick: recentAnchorClick,
+      visibleElements: visibleElements.slice(0, 15), // 只返回前 15 個
+      viewportHeight: viewportHeight,
+    };
+  };
+
+  // 清除滾動變化標記
+  window.__clearScrollChanged = function () {
+    window.__scrollTracking.scrollChanged = false;
+  };
+
+  console.log("✅ 錨點連結和視口追蹤已初始化");
+
+  // ========== Final log ==========
+
   console.log(
-    "initscript.js loaded with network tracking, target='_blank' prevention, and toast listener"
+    "✅ initscript.js 完全載入：target='_blank' 防護、Toast 監聽、網路追蹤、視口追蹤"
   );
 })();
