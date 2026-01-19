@@ -49,7 +49,7 @@ The environment data includes:
 - `cart_changes`: Array of shopping cart count changes
 - `toast_summary`: Summary including total toasts, cart status, latest cart count
 
-**If cart count increases (e.g., from 0 to 1), the task is DONE:**
+**The initial cart count is 0. If cart count increases (e.g., from 0 to 1) or the cart count is 1, the task is DONE:**
 - The product was successfully added to cart
 - No need to check cart page
 - Task is complete
@@ -92,7 +92,19 @@ Example toast_messages:
 5. **State explicitly: "商品已成功加入購物車"** when count increases
 6. Then continue with the rest of the page description
 
----
+**IMPORTANT: When describing cart badges in navigation:**
+
+If you see a number/badge with these indicators:
+- Attribute `parser-cart-badge="true"`
+- Class contains "cart", "round-badge", "cms-badge"
+- Numeric badge near shopping cart icon in header
+
+**Always identify it as "購物車數量" not just "數字":**
+
+✅ Correct: "購物車圖示旁顯示數量徽章『1』，表示購物車內有 1 件商品。"
+❌ Wrong: "導覽列顯示數字 1。" (unclear what it means)
+
+This helps connect the cart badge to the add-to-cart action.
 
 ## **CRITICAL: Viewport Changes and Anchor Navigation**
 
