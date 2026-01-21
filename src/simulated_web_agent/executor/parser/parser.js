@@ -2,7 +2,7 @@
  *  DOM "stripper" — keeps empty controls **and** guarantees unique
  *  parser-semantic-id values by appending numeric suffixes
  * ========================================================================= */
-
+// parser.py
 const parse = () => {
   /* ---------- globals --------------------------------------------------- */
   const BLACKLISTED_TAGS = new Set([
@@ -580,7 +580,7 @@ const parse = () => {
       selectedValues: Array.from(el.selectedOptions).map((opt) => opt.value),
     })),
     toast_messages: toastInfo.messages,
-    cart_changes: toastInfo.cartChanges,
+    cart_changes: toastInfo.cartChanges,//是一個array
     toast_summary: toastInfo.summary,
     viewport_info: viewportInfo,
   };

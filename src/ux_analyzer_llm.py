@@ -1,13 +1,14 @@
 """
-UX Analyzer with LLM - 使用 LLM 智能分析測試結果
+UX Analyzer -  LLM 深度分析版本
 
 使用方式:
-    python src/ux_analyzer_llm.py --run-dir runs/2026-01-01_20-14-18_3a5b --persona persona_cautious_verifier_nianjia.txt
+    python ux_analyzer_llm.py --run-dir runs/2026-01-19_22-29-07_c9ca --persona persona_old.txt
 
-    API Key 會自動從 .env 檔案讀取 OPENAI_API_KEY
+API Key 會自動從 .env 檔案讀取 OPENAI_API_KEY
 """
 
 import json
+import re
 import os
 import argparse
 from pathlib import Path
@@ -17,19 +18,91 @@ from dotenv import load_dotenv
 import openai
 
 
+# ==================== Persona Profile ====================
+
+class PersonaProfile:
+    """解析並儲存 persona 特徵"""
+
+    def __init__(self, persona_file: str):
+        self.raw_text = Path(persona_file).read_text(encoding='utf-8')
+        self.name = self._extract_name()
+        self.age = self._extract_field('Age')
+        self.persona_type = self._extract_persona_type()
+        self.risk_perception = self._extract_level('風險感知|Risk Perception')
+        self.self_efficacy = self._extract_level('自我效能|Self-Efficacy')
+        self.working_memory = self._extract_level('工作記憶容忍度|Working Memory Tolerance|Working Memory')
+        self.strategy = self._extract_strategy()
+
+    def _extract_name(self) -> str:
+        # Try to find name like "Mrs. Wang" or "Mr. Chen"
+        match = re.search(r'(Mrs?|Ms)\.\s+([A-Z][a-z]+)', self.raw_text)
+        if match:
+            return f"{match.group(1)}. {match.group(2)}"
+
+        # Try Chinese name format
+        match = re.search(r'(王|陳|李|張|林|吳|黃|周|徐|孫|馬|朱|胡|郭|何|高|羅|鄭|梁|謝|宋|唐|許|鄧|馮|韓|曹|曾|彭|蕭|蔡|潘|田|董|袁|於|余|葉|蔣|杜|蘇|魏|程|呂|丁|沈|任|姚|盧|傅|鍾|姜|崔|譚|廖|范|汪|陸|金|石|戴|賈|韋|夏|邱|方|侯|鄒|熊|孟|秦|白|江|閻|薛|尹|段|雷|黎|史|龍|陶|賀|顧|毛|郝|龔|邵|萬|錢|嚴|覃|武|戴|莫|孔|向|常)(先生|女士|太太)', self.raw_text)
+        if match:
+            return f"{match.group(1)}{match.group(2)}"
+        
+        # Try to find any name after "Name:" or "姓名:"
+        match = re.search(r'(?:Name|姓名)[：:]\s*([^\n]+)', self.raw_text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+
+        return "Unknown"
+
+    def _extract_field(self, pattern: str) -> str:
+        match = re.search(f'({pattern})[：:]\\s*([^\n]+)', self.raw_text, re.IGNORECASE)
+        return match.group(2).strip() if match else "Unknown"
+
+    def _extract_persona_type(self) -> str:
+        text_upper = self.raw_text.upper()
+        if '謹慎驗證型' in self.raw_text or 'CAUTIOUS VERIFIER' in text_upper or 'CAUTIOUS' in text_upper:
+            return 'cautious_verifier'
+        elif '效率導向型' in self.raw_text or 'ROUTINE BUYER' in text_upper or 'EFFICIENCY' in text_upper:
+            return 'efficiency_oriented'
+        elif 'OLD' in text_upper or '年長' in self.raw_text or '老年' in self.raw_text:
+            return 'elderly_user'
+        return 'unknown'
+
+    def _extract_level(self, pattern: str) -> str:
+        match = re.search(f'({pattern})[：:]\\s*([^\n]+)', self.raw_text, re.IGNORECASE)
+        if match:
+            level_text = match.group(2).upper()
+            if 'HIGH' in level_text or '高' in level_text:
+                return 'HIGH'
+            elif 'LOW' in level_text or '低' in level_text:
+                return 'LOW'
+            elif 'MEDIUM' in level_text or '中' in level_text:
+                return 'MEDIUM'
+        return 'UNKNOWN'
+
+    def _extract_strategy(self) -> str:
+        if 'VERIFICATION-ORIENTED' in self.raw_text or '驗證導向' in self.raw_text:
+            return 'verification'
+        elif 'GOAL-ORIENTED' in self.raw_text or '目標導向' in self.raw_text:
+            return 'goal_oriented'
+        return 'unknown'
+
+    def to_dict(self) -> Dict[str, str]:
+        """轉換為字典格式"""
+        return {
+            'name': self.name,
+            'type': self.persona_type,
+            'risk_perception': self.risk_perception,
+            'self_efficacy': self.self_efficacy,
+            'working_memory': self.working_memory,
+            'strategy': self.strategy
+        }
+
+
+# ==================== LLM Analyzer ====================
+
 class LLMUXAnalyzer:
     """使用 LLM 進行智能 UX 分析"""
 
     def __init__(self, api_key: str = None):
-        """
-        初始化 LLM 分析器
-
-        Args:
-            api_key: OpenAI API key，如果不提供則從 .env 檔案讀取
-        """
-        # 載入 .env 檔案
         load_dotenv()
-
         self.api_key = api_key or os.environ.get('OPENAI_API_KEY')
         if not self.api_key:
             raise ValueError(
@@ -37,35 +110,21 @@ class LLMUXAnalyzer:
                 "1. 在 .env 檔案中設定: OPENAI_API_KEY=your_key\n"
                 "2. 或使用 --api-key 參數"
             )
-
         self.client = openai.OpenAI(api_key=self.api_key)
 
     def analyze_test_results(
         self,
         memory_trace: List[Dict],
         action_trace: List[str],
-        persona_text: str,
-        persona_info: Dict,
+        persona: PersonaProfile,
         persona_file: str = None,
         run_dir: str = None
     ) -> Dict[str, Any]:
-        """
-        使用 LLM 分析測試結果
-
-        Args:
-            memory_trace: 完整的 memory_trace.json 數據
-            action_trace: 動作序列
-            persona_text: persona 檔案原文
-            persona_info: persona 基本資訊
-            persona_file: persona 檔案名稱 (選填)
-            run_dir: 測試目錄名稱 (選填)
-
-        Returns:
-            結構化的 UX 分析結果
-        """
+        """使用 LLM 分析測試結果"""
+        
         # 準備數據給 LLM
         analysis_data = self._prepare_analysis_data(
-            memory_trace, action_trace, persona_text, persona_info
+            memory_trace, action_trace, persona
         )
 
         # 呼叫 LLM
@@ -73,44 +132,41 @@ class LLMUXAnalyzer:
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4o",  # 使用最新的 GPT-4o 模型
+                model="gpt-4o",
                 messages=[
                     {
                         "role": "system",
-                        "content": "你是一位資深的 UX 研究專家，專門分析使用者測試結果。你會仔細分析測試數據，找出所有 UX 問題並提供可執行的改善建議。你必須嚴格遵循指示，確保分析的準確性和完整性。"
+                        "content": "你是一位資深的 UX 研究專家。請對以下測試數據進行深度分析，找出所有 UX 問題並根據實際的 HTML 標籤提供可執行的改善建議。"
                     },
                     {
                         "role": "user",
                         "content": self._build_analysis_prompt(analysis_data)
                     }
                 ],
-                temperature=0.1,  # 進一步降低temperature讓回應更準確
-                max_completion_tokens=12000,  # 增加到12000讓LLM有足夠空間輸出詳細分析
-                response_format={"type": "json_object"}  # 強制 JSON 輸出
+                temperature=0.1,
+                max_completion_tokens=12000,
+                response_format={"type": "json_object"}
             )
 
             # 解析 LLM 回應
             analysis_result = self._parse_llm_response(response.choices[0].message.content)
 
-            # 添加測試元數據到結果的開頭 (覆蓋 LLM 可能生成的示例數據)
+            # 添加測試元數據
             test_metadata = {
                 "persona_file": persona_file or "Unknown",
-                "persona_name": persona_info.get('name', 'Unknown'),
-                "persona_type": persona_info.get('type', 'Unknown'),
-                "risk_perception": persona_info.get('risk_perception', 'Unknown'),
-                "self_efficacy": persona_info.get('self_efficacy', 'Unknown'),
-                "working_memory": persona_info.get('working_memory', 'Unknown'),
-                "strategy": persona_info.get('strategy', 'Unknown'),
+                "persona_name": persona.name,
+                "persona_type": persona.persona_type,
+                "risk_perception": persona.risk_perception,
+                "self_efficacy": persona.self_efficacy,
+                "working_memory": persona.working_memory,
+                "strategy": persona.strategy,
                 "run_directory": run_dir or "Unknown",
                 "analysis_timestamp": datetime.now().isoformat(),
                 "total_actions": analysis_data.get('total_actions', 0),
-                "total_thoughts": analysis_data.get('total_thoughts', 0),
-                "total_reflections": analysis_data.get('total_reflections', 0)
+                "total_thoughts": analysis_data.get('total_thoughts', 0)
             }
 
-            # 先創建結果字典，然後用真實的 test_metadata 覆蓋 LLM 生成的示例數據
             result_with_metadata = {"test_metadata": test_metadata}
-            # 移除 LLM 結果中可能存在的 test_metadata (如果有的話)
             if 'test_metadata' in analysis_result:
                 del analysis_result['test_metadata']
             result_with_metadata.update(analysis_result)
@@ -128,37 +184,27 @@ class LLMUXAnalyzer:
         self,
         memory_trace: List[Dict],
         action_trace: List[str],
-        persona_text: str,
-        persona_info: Dict
+        persona: PersonaProfile
     ) -> Dict[str, Any]:
         """準備給 LLM 的分析數據"""
 
-        # 提取關鍵思考（中文 thoughts）
+        # 提取中文思考
         chinese_thoughts = []
-        english_reflections = []
-
         for entry in memory_trace:
             if entry.get('kind') == 'thought':
                 content = entry.get('content', '')
-                # 檢查是否包含中文字符
                 if any('\u4e00' <= char <= '\u9fff' for char in content):
                     chinese_thoughts.append({
                         'timestamp': entry.get('timestamp', 0),
                         'content': content
                     })
-            elif entry.get('kind') == 'reflection':
-                english_reflections.append({
-                    'timestamp': entry.get('timestamp', 0),
-                    'content': entry.get('content', '')[:300]  # 限制長度
-                })
 
-        # 解析動作序列（支援新舊兩種格式）
+        # 解析動作序列
         actions = []
-        element_info_map = {}  # 儲存元素的 class/id 資訊
+        element_info_map = {}
         for action_str in action_trace:
             try:
                 action = json.loads(action_str)
-                # 新格式：包含 action 和 element_info
                 if isinstance(action, dict) and "action" in action:
                     actual_action = action["action"]
                     element_info = action.get("element_info", {})
@@ -167,30 +213,18 @@ class LLMUXAnalyzer:
                         element_info_map[target_id] = element_info
                     actions.append(actual_action)
                 else:
-                    # 舊格式：直接是 action
                     actions.append(action)
             except:
                 pass
 
-        # ===== 精確統計動作次數（防止 LLM 編造數字）=====
-
-        # 1. 統計每個 target 被點擊的次數
+        # 精確統計動作次數
         target_click_count = {}
         for action in actions:
             target = action.get('target', '')
             if target:
                 target_click_count[target] = target_click_count.get(target, 0) + 1
 
-        # 2. 統計每個關鍵字出現的次數（基於 description）
-        keyword_frequency = {}
-        keyword_list = ['品牌公告', '品牌故事', '商品規格', '詳細說明', '加入購物車', '評價', '購物車', 'TOP熱賣', '產品']
-        for action in actions:
-            desc = action.get('description', '')
-            for keyword in keyword_list:
-                if keyword in desc:
-                    keyword_frequency[keyword] = keyword_frequency.get(keyword, 0) + 1
-
-        # 3. 建立動作序列摘要（每個動作的編號和描述）
+        # 建立動作序列摘要
         action_summary = []
         for i, action in enumerate(actions):
             action_summary.append({
@@ -200,43 +234,35 @@ class LLMUXAnalyzer:
                 'action_type': action.get('action', 'click')
             })
 
-        # 4. 找出重複點擊的元素（點擊 >= 2 次的）
+        # 找出重複點擊的元素
         repeated_clicks = {k: v for k, v in target_click_count.items() if v >= 2}
 
-        # 5. 舊格式的 action_frequency（保持向後兼容）
-        action_frequency = {}
-        for action in actions:
-            desc = action.get('description', '')
-            key_words = []
-            for keyword in ['品牌公告', '品牌故事', '商品規格', '詳細說明', '加入購物車', '評價']:
-                if keyword in desc:
-                    key_words.append(keyword)
-            if key_words:
-                key = '+'.join(key_words)
-                action_frequency[key] = action_frequency.get(key, 0) + 1
+        # 除錯輸出
+        print(f"\n📍 提取到 {len(element_info_map)} 個元素的資訊映射")
+        if element_info_map:
+            print("範例元素資訊:")
+            for target_id, info in list(element_info_map.items())[:3]:
+                print(f"  - {target_id}: class='{info.get('class', '')}', id='{info.get('id', '')}', tag='{info.get('tag', '')}'")
+        else:
+            print("⚠️ 警告：未提取到任何元素資訊！")
 
         return {
-            'persona_info': persona_info,
-            'persona_text_excerpt': persona_text[:1500],
+            'persona_info': persona.to_dict(),
+            'persona_text_excerpt': persona.raw_text[:1500],
             'total_actions': len(actions),
             'actions': actions,
-            'action_frequency': action_frequency,
             'element_info_map': element_info_map,
             'chinese_thoughts': chinese_thoughts,
-            'english_reflections': english_reflections[:50],
             'total_thoughts': len(chinese_thoughts),
-            'total_reflections': len(english_reflections),
-            # ===== 新增：精確統計數據（防止 LLM 編造）=====
-            'target_click_count': target_click_count,      # 每個 target 的點擊次數
-            'keyword_frequency': keyword_frequency,        # 每個關鍵字的出現次數
-            'action_summary': action_summary,              # 動作序列摘要
-            'repeated_clicks': repeated_clicks,            # 重複點擊的元素
+            'target_click_count': target_click_count,
+            'action_summary': action_summary,
+            'repeated_clicks': repeated_clicks,
         }
 
     def _build_analysis_prompt(self, data: Dict[str, Any]) -> str:
         """構建給 LLM 的分析 prompt"""
 
-        prompt = f"""你是一位資深的 UX 研究專家。請對以下測試數據進行**深度分析**，找出所有 UX 問題並提供可執行的改善建議。
+        prompt = f"""你是一位資深的 UX 研究專家。請對以下測試數據進行深度分析，找出所有 UX 問題並根據實際的 HTML 標籤提供可執行的改善建議。
 
 # Persona 資訊
 - **姓名**: {data['persona_info']['name']}
@@ -249,572 +275,153 @@ class LLMUXAnalyzer:
 ## Persona 特徵描述
 {data['persona_text_excerpt']}
 
+---
+
 # 測試數據
 
-## 動作序列（共 {data['total_actions']} 個動作）
-{json.dumps(data['actions'], ensure_ascii=False, indent=2)}
+## 🔥 精確統計數據（只能引用這些數字，禁止編造）
 
-## 🔥🔥🔥 精確統計數據（禁止編造，只能引用以下數字）🔥🔥🔥
+### 總動作次數
+**{data['total_actions']} 個動作**
 
-⚠️ **嚴重警告**：以下是系統預先計算的精確數字，你**只能引用這些數字**，**絕對禁止編造或修改任何數字**！
-
-### 📊 總動作次數
-- **總共執行了 {data['total_actions']} 個動作**
-
-### 📊 每個 target 的點擊次數（精確數字）
+### 每個 target 的點擊次數
+```json
 {json.dumps(data.get('target_click_count', {}), ensure_ascii=False, indent=2)}
+```
 
-### 📊 關鍵字出現次數（精確數字）
-{json.dumps(data.get('keyword_frequency', {}), ensure_ascii=False, indent=2)}
-
-### 📊 重複點擊的元素（點擊 >= 2 次）
+### 重複點擊的元素（點擊 >= 2 次）
+```json
 {json.dumps(data.get('repeated_clicks', {}), ensure_ascii=False, indent=2)}
+```
 
-### 📊 動作序列摘要（每一步的詳細記錄）
-{json.dumps(data.get('action_summary', []), ensure_ascii=False, indent=2)}
-
-### 📊 舊格式統計（向後兼容）
-{json.dumps(data['action_frequency'], ensure_ascii=False, indent=2)}
-
-## 📍 元素資訊映射（實際的 HTML class 和 id）
-以下是測試過程中互動元素的實際 HTML 資訊，**在改善建議中必須使用這些實際的 class 和 id**：
-{json.dumps(data.get('element_info_map', {}), ensure_ascii=False, indent=2)}
-
-**🚨 引用數字的規則（必須遵守）**：
-1. 當你說「點擊 X 次」時，必須從上面的統計數據中查找對應數字
-2. 如果上面沒有該數字，就說「根據動作序列，點擊了 X 次」並引用 action_summary 中的 step 編號
-3. **絕對禁止**說出上面統計中不存在的數字
-4. 如果不確定次數，使用「多次」而不是編造具體數字
-
-**分析要點**：
-- 如果某個動作重複 ≥ 3 次，可能表示**連結失效、回饋不足或使用者困惑**
-- 如果點擊「品牌公告」或「品牌故事」多次，可能表示**尋找驗證資訊但未找到**
-- 如果點擊「加入購物車」多次，可能表示**缺乏成功回饋**
-
-## 使用者內心想法（中文思考，共 {data['total_thoughts']} 條）
-**這是最重要的數據！** 這些是使用者的真實內心獨白，包含困惑、疑慮、決策過程：
-
-{json.dumps(data['chinese_thoughts'], ensure_ascii=False, indent=2)}
-
-## 使用者反思（英文，共 {len(data['english_reflections'])} 條）
-{json.dumps(data['english_reflections'], ensure_ascii=False, indent=2)[:5000]}
+### 動作序列摘要
+```json
+{json.dumps(data.get('action_summary', [])[:30], ensure_ascii=False, indent=2)}
+```
 
 ---
 
-# 分析要求（嚴格遵守）
+## 📍 元素資訊映射（真實的 HTML class/id）
+
+⚠️ **這是最重要的資料！** 以下是真實的 HTML 元素資訊，在建議中必須使用這些真實的 class 和 id：
+
+```json
+{json.dumps(data.get('element_info_map', {}), ensure_ascii=False, indent=2)}
+```
+
+**如何使用**：
+1. 找到對應的 target ID（例如 "item5"）
+2. 使用其中的 `class` 欄位作為 CSS 選擇器
+3. **重要：簡化選擇器**
+   - ❌ 不好：`.sc-hImiYT.etRXNy.product-card__vertical.product-card__vertical--hover.new-product-card`
+   - ✅ 良好：`.product-card__vertical` 或 `.new-product-card`（選擇最具語意的 class）
+4. 範例：如果 "item5" 的 class 是 "btn primary-btn add-to-cart-btn"，就用 `.add-to-cart-btn`（最具體的）
+5. **絕對不要猜測或編造 class 名稱**
+
+---
+
+## 💭 使用者內心想法（最重要的數據！）
+
+共 {data['total_thoughts']} 條想法：
+
+```json
+{json.dumps(data['chinese_thoughts'], ensure_ascii=False, indent=2)}
+```
+
+---
+
+# 分析要求
 
 ## 步驟 1：深度分析使用者行為
 
-請**逐條閱讀**所有中文內心想法，找出：
-1. **重複出現的疑慮**（例如：多次提到「健字號」、「TFDA」、「驗證」）
-2. **未被滿足的需求**（例如：想要看到但沒看到的資訊）
-3. **放棄的原因**（如果任務未完成）
-4. **心理變化演進**（從初期探索 → 產生疑慮 → 挫折累積 → 放棄/妥協）
+逐條閱讀所有內心想法，找出：
+1. 重複出現的疑慮或困惑
+2. 未被滿足的需求
+3. 放棄的原因（如果任務未完成）
+4. 心理變化演進
 
-## 步驟 2：識別所有 UX 問題（強制要求）
+## 步驟 2：識別 UX 問題
 
-**嚴格要求**：
-- ✅ 必須找出 **至少 4 個獨立的具體 UX 問題**（不是 1-2 個泛化問題）
-- ✅ 每個問題都是**獨立的、具體的**（例如：問題1是「缺乏健字號連結」，問題2是「品牌公告連結失效」，問題3是「產品聲稱缺數據」）
-- ❌ 禁止輸出泛化問題（如「資訊分散」要拆解成：缺少哪些具體資訊？）
+每個問題必須包含：
+1. 具體的問題描述
+2. 引用至少 3-5 條使用者想法（完整原文）
+3. 從「精確統計數據」中引用點擊次數
+4. 嚴重程度判斷（CRITICAL/HIGH/MEDIUM/LOW）
 
-每個問題必須包含（缺一不可）：
-1. **具體的問題描述**
-   - 必須明確指出缺少什麼（例如：「缺乏健字號核可編號」而不是「資訊不足」）
-   - 必須列出具體的缺失項目（例如：❌ 健字號編號 ❌ TFDA連結 ❌ 證書PDF）
+## 步驟 3：產生改善建議
 
-2. **引用至少 5 條使用者想法**
-   - 必須引用完整原文，不可改寫
-   - 如果重複點擊，需展示不同時間點的想法變化
+每個建議必須包含：
+1. 優先級（P0/P1/P2）
+2. 具體行動（必須標示【頁面】和【元素位置】）
+3. CSS 變更（必須使用元素資訊映射中的真實 class/id）
 
-3. **從「重複動作統計」中提取準確次數**
-   - 必須直接引用 action_frequency 中的數字
-   - 格式：「點擊『品牌公告』X 次（從重複動作統計得出）」
-
-4. **嚴重程度準確判斷**
-   - CRITICAL: 導致任務完全失敗（例如：無法驗證而放棄購買）
-   - HIGH: 嚴重影響體驗（例如：產生強烈懷疑）
-   - MEDIUM: 造成困擾（例如：需要額外搜尋）
-   - LOW: 輕微問題（例如：UI 小瑕疵）
-
-## 步驟 3：時間序列分析（新增要求）
-
-針對重複點擊最多的動作（從「重複動作統計」找出），必須追蹤：
-1. 使用者在第 1 次點擊時的想法
-2. 使用者在中間階段的想法變化
-3. 使用者在最後階段的想法（是否放棄？）
-
-示例：
+**CSS 建議格式範例**：
 ```
-第 1 次點擊：「會不會藏在品牌公告裡？」（期待）
-第 5 次點擊：「沒有官方連結我真的不敢買」（焦慮）
-第 9 次點擊：「要不要自己去 TFDA 查？」（放棄）
+【產品頁】的 button.add-to-cart (target='item12', class='add-to-cart')：
+- 將 font-size 從 14px 改為 16px
+- 將 padding 從 8px 改為 12px
+- 將 background-color 改為更高對比的顏色
 ```
-
-## 步驟 4：技術問題檢查與頁面元素識別（新增要求）
-
-檢查 action 序列中的異常模式：
-- target ID 是否變化？（可能是連結失效）
-- 是否有連續點擊相同元素但無進展？（可能是回饋不足）
-- 是否有跳躍式導航？（可能是資訊架構問題）
-
-**🔍 使用「元素資訊映射」中的實際 HTML class 和 id**：
-
-⚠️ **重要**：在建議中必須使用「元素資訊映射」中提供的**實際 class 和 id**，而不是猜測或使用通用名稱！
-
-1. **從「元素資訊映射」查找實際的 CSS 選擇器**：
-   - 每個 target ID（如 'item33'）都有對應的實際元素資訊
-   - 使用 `class` 欄位中的**實際 class 名稱**（例如：如果 class 是 "product-detail__title ec-product-title"，就使用 `.product-detail__title` 或 `.ec-product-title`）
-   - 使用 `id` 欄位中的**實際 id**（例如：如果 id 是 "main-product-info"，就使用 `#main-product-info`）
-   - 使用 `tag` 欄位來識別元素類型（如 `button`、`a`、`div` 等）
-   - 使用 `data_attributes` 中的 data 屬性（例如：`[data-product-id="123"]`）
-
-2. **如果元素資訊映射中沒有對應資訊**：
-   - 只使用 target ID（如 `[parser-semantic-id="item33"]`）
-   - 在建議中明確標註「需要開發者確認實際的 CSS 選擇器」
-   - **絕對不要**捏造或猜測 class 名稱
-
-3. **從 action 序列推測頁面名稱**：
-   - 查看 action 的 `description` 欄位推測頁面（例如：「進入常溫濃雞精60入商品頁」→ 【產品詳情頁】）
-   - 如果使用者提到「商品規格」、「產品頁面」→ 對應【產品詳情頁】
-   - 如果使用者提到「購物車」、「結帳」→ 對應【購物車頁面】或【結帳頁面】
-
-## 步驟 5：產生可執行的改善建議
-
-每個問題對應至少一個改善建議，包含：
-1. **優先級**：P0 (立即) / P1 (短期) / P2 (中期)
-2. **具體行動**（至少 3 條）：
-   - ⚠️ **關鍵要求：必須明確標示頁面和元素位置**
-   - 每條建議必須遵循以下格式：
-     * 【頁面名稱】：明確指出是哪個頁面（例如：產品詳情頁、購物車頁面、結帳頁面）
-     * 【元素位置】：明確指出是頁面上的哪個區塊或元素（例如：產品標題區塊、價格顯示區域、加入購物車按鈕）
-     * 【具體變更】：明確說明要改什麼、從什麼改到什麼（例如：「字體大小從 12pt 改為 16pt」、「按鈕尺寸從 32×32px 改為 48×48px」）
-
-   - **範例格式**：
-     * ❌ 不佳：「改善字體大小」
-     * ❌ 不佳：「將網站字體大小調整為至少 14pt」
-     * ❌ 不佳：「【產品詳情頁】的【產品標題區塊】(.product-title)：...」（使用了猜測的通用 class 名稱）
-     * ✅ 良好：「【產品詳情頁】的【產品標題區塊】（從元素資訊映射：class="ec-product-detail__title"，使用 `.ec-product-detail__title`）：將字體大小從 12pt 調整為 16pt」
-     * ✅ 良好：「【產品詳情頁】的【加入購物車按鈕】（target ID: item30，從元素資訊映射：tag="button", class="add-cart-btn primary-btn"）：將按鈕尺寸從 32×32px 增大至 48×48px」
-     * ✅ 良好：如果元素資訊映射中沒有 class 資訊：「【產品詳情頁】的【品牌公告連結】（target ID: item3，需開發者確認實際 CSS 選擇器）：修復連結失效問題」
-
-   - 如果涉及資料，必須列出要顯示的內容（例如：「顯示健字號：衛署健食字第AXXXXXX號」）
-   - 如果涉及技術修復，必須說明如何修復（例如：「檢查連結 href 是否正確」）
-   - 如果可以從 action_trace 中識別出元素的 target ID，必須在建議中引用該 ID（例如：「修復 target='item3' 的『品牌公告』連結」）
-
-3. **預期效果量化**（例如：「轉換率從 0% 提升至 40-60%」）
-4. **實施難度評估**：簡單 / 中等 / 困難（考量技術複雜度、資源需求、風險）
-5. **所需資源**（例如：「前端工程師 1 人、設計師 0.5 人、1週開發時間」）
-6. **實施時間建議**（例如：「1-2週內完成」）
-
-### 📐 視覺設計準則參考模板（針對年長使用者）
-
-在提出改善建議時，**特別是當 Persona 為年長使用者時**，請參考以下設計準則：
-
-**字體與可讀性 (Typography & Readability)**：
-- 使用無襯線字體（如 Arial, Helvetica, Verdana），因為它們在螢幕上更易辨識
-- 字體大小應至少為 12pt（建議 14-16pt），若可能則提供可調整大小的選項
-- 避免僅使用大寫字母，因為這會破壞單字的輪廓，降低閱讀速度
-- 行間距建議為字體大小的 1.5-2 倍（例如：16pt 字體搭配 24-32pt 行高）
-
-**對比度與色彩 (Contrast & Color)**：
-- 確保文字與背景之間有高度的明度對比（建議對比度至少 4.5:1，理想為 7:1）
-- 黑底白字或白底黑字是最佳選擇
-- 不要僅依靠顏色來傳達資訊（例如：紅色代表錯誤），因為年長者對色彩的辨別力（尤其是藍、綠色系）會下降
-- 應同時搭配圖示或文字標籤來輔助顏色訊息
-
-**間距與佈局 (Spacing & Layout)**：
-- 增加行間距與字間距，避免視覺擁擠（建議行高至少為字體大小的 1.5 倍）
-- 導覽元素應保持一致，固定在螢幕的相同位置
-- 避免在單一畫面中呈現過多資訊（一次專注於一個主要任務）
-- 留白空間充足，避免元素過於緊密
-
-**互動設計與控制項 (Interaction & Controls)**：
-- 觸控按鈕或滑鼠點擊目標應足夠大（至少 44×44 像素或 9.6 毫米見方）
-- 按鈕之間應有足夠間距（至少 8-12 像素），避免誤點
-- 提供即時且明顯的反饋（如視覺變化、聲音提示）
-- 反饋應清楚說明操作是否成功，或發生了什麼錯誤
-- 避免使用複雜的手勢（如多指縮放、長按後拖拽），簡單的「點擊」是對年長者最友善的互動方式
-
-**認知負荷的優化 (Cognitive Load Optimization)**：
-- 簡化流程：減少達成目標所需的步驟，每一頁螢幕只應呈現一個核心任務
-- 減少記憶負擔：利用「識別」而非「回憶」（例如：提供選項選單，而不是讓使用者自己輸入）
-- 提供明確的導覽路徑（如麵包屑導航），讓使用者知道自己目前在系統中的位置
-- 一致性：術語、圖示和操作邏輯在整個系統中必須保持高度一致
-- 使用清晰、簡單的語言，避免專業術語和縮寫
-
-**錯誤防範與恢復 (Error Prevention & Recovery)**：
-- 預防錯誤：在執行不可逆的操作（如刪除、結帳）前，應彈出確認對話框
-- 清晰的錯誤訊息：不要使用代碼（如 Error 404），應使用易懂的語言解釋問題
-- 提供具體的修正建議（例如：「請輸入正確的 10 位數電話號碼」而不是「輸入無效」）
-- 撤銷功能：提供簡單的方法讓使用者能退回到上一步（如明顯的「返回」或「取消」按鈕）
-- 容錯設計：系統應能容忍輕微的輸入錯誤（如自動修正、提供建議）
-
-**應用範例**：
-當提出改善建議時，應具體說明如何應用這些準則。例如：
-- ❌ 不佳：「改善按鈕設計」
-- ✅ 良好：「將『加入購物車』按鈕尺寸從 32×32px 增大至 48×48px（符合最小觸控目標 44×44px 準則），使用高對比色（白底綠字，對比度 7:1），並在點擊後顯示『✓ 已加入購物車』的明確反饋訊息（字體 16pt，持續 2 秒後自動消失）」
-
-## 步驟 6：產生 UX 改進行動計劃（新增）
-
-在分析完所有問題和建議後，請整合成一個完整的行動計劃，按時間軸組織：
-
-**短期行動（1-2週內）**：
-- 列出所有 P0 優先級的改善項目
-- 說明為什麼這些項目必須立即執行
-- 預估整體影響（例如：「可將轉換率從 0% 提升至 30%」）
-
-**中期行動（1-2個月內）**：
-- 列出 P1 優先級的改善項目
-- 說明這些項目如何在短期改善的基礎上進一步優化
-- 預估累積影響
-
-**長期行動（3-6個月內）**：
-- 列出 P2 優先級的改善項目和策略性改進
-- 說明如何建立長期競爭優勢
-- 預估最終效果
-
-每個時間段還需包含：
-- **成功指標**：如何衡量改善效果（例如：轉換率、跳出率、平均停留時間）
-- **快速勝利（Quick Wins）**：哪些改善可以在該時段內最快見效
-- **風險與挑戰**：實施過程中可能遇到的障礙
 
 ---
 
-# 輸出格式
+# 輸出格式（JSON）
 
-請以 **JSON 格式** 回應，結構如下：
-
-**強制檢查清單（輸出前必須確認）**：
-✅ ux_issues 陣列有至少 4 個元素？
-✅ 每個問題都引用了至少 5 條 user_thoughts？
-✅ 有進行時間序列分析（behavioral_patterns）？
-✅ 建議夠具體（有 UI 描述/數據內容/技術方案）？
-✅ 每個 recommendation 都包含 implementation_difficulty 和 required_resources？
-✅ 包含完整的 action_plan（短期/中期/長期）？
-✅ **每條 specific_actions 都明確標示了【頁面名稱】和【元素位置】？**
-✅ **每條 specific_actions 都包含具體的數值變更（例如：從 12pt 改為 16pt）？**
-✅ **如果涉及字體、按鈕、間距等視覺元素，是否提供了具體的尺寸和數值？**
-✅ **【重要】CSS 選擇器是否來自「元素資訊映射」中的實際 class/id，而非猜測的通用名稱？**
-✅ **【重要】如果元素資訊映射中沒有對應資訊，是否標註了「需開發者確認實際 CSS 選擇器」？**
-✅ **🚨【最重要】所有提到的點擊次數是否都來自「精確統計數據」區塊？禁止編造數字！**
-✅ **🚨【最重要】如果說「點擊 X 次」，X 是否與 target_click_count 或 keyword_frequency 中的數字一致？**
-
+```json
 {{
-  "test_metadata": {{
-    "persona_file": "persona_cautious_verifier_nianjia.txt",
-    "persona_name": "{data['persona_info']['name']}",
-    "persona_type": "{data['persona_info']['type']}",
-    "analysis_timestamp": "ISO 8601 格式時間",
-    "total_actions": {data['total_actions']},
-    "total_thoughts": {data['total_thoughts']}
+  "執行摘要": {{
+    "任務完成": true/false,
+    "完成原因": "簡短說明",
+    "關鍵洞察": "最重要的發現"
   }},
-  "executive_summary": {{
-    "task_completed": false,
-    "completion_reason": "使用者無法找到健字號 TFDA 認證連結，因驗證需求未滿足而放棄購買",
-    "key_insight": "謹慎型使用者需要權威機構背書，缺乏官方認證入口是致命障礙"
-  }},
-  "behavioral_patterns": [
+  "UX問題": [
     {{
-      "pattern": "重複點擊品牌公告尋找認證資訊",
-      "evidence": "連續點擊「品牌公告」9次（從重複動作統計：品牌公告=9），從 action 序列中可見 target 從 item3 變成 gogoro_12_gogoro_11_，可能表示連結失效或頁面元素 ID 變化",
-      "interpretation": "使用者期待在品牌公告中找到健字號認證資訊，但連結失效或內容不符預期，導致反覆嘗試",
-      "timeline_evolution": {{
-        "early_stage": "第1次點擊：期待能找到認證資訊",
-        "mid_stage": "第5次點擊：開始焦慮「沒有官方連結我真的不敢買」",
-        "late_stage": "第9次點擊：決定放棄網站，自己去 TFDA 查詢"
-      }}
-    }},
-    {{
-      "pattern": "對產品聲稱產生懷疑",
-      "evidence": "多次質疑「每隻雞只做 2.5 包」的產率，要求看製程數據和實驗報告",
-      "interpretation": "高風險感知的謹慎型使用者需要科學依據來驗證行銷聲稱"
+      "標題": "問題標題",
+      "嚴重程度": "CRITICAL/HIGH/MEDIUM/LOW",
+      "類別": "導航/資訊呈現/互動回饋/信任建立/其他",
+      "描述": "具體的問題描述",
+      "使用者想法": [
+        "使用者想法原文1",
+        "使用者想法原文2",
+        "使用者想法原文3"
+      ],
+      "影響": "此問題對使用者體驗的影響",
+      "證據": "從精確統計引用：點擊 target='itemXX' 共 X 次"
     }}
   ],
-  "ux_issues": [
+  "改善建議": [
     {{
-      "title": "缺乏官方認證驗證入口（健字號 TFDA 連結）",
-      "severity": "CRITICAL",
-      "category": "信任建立",
-      "description": "產品聲稱「通過健字號認證『有效抗疲勞』」但網站未提供：(1) 健字號核可編號 (2) TFDA 資料庫查詢連結 (3) 認證證書 PDF 下載 (4) 檢驗報告下載。對於高風險感知的謹慎型使用者，這是購買的致命障礙。",
-      "user_thoughts": [
-        "那個『有效抗疲勞』的健字號到底是哪個核可編號？要是能直接連到衛福部資料庫就放心多了。",
-        "那個健康字號到底在哪一頁能直接點進 TFDA 資料庫？沒有官方連結我真的不敢買。",
-        "健字號到底藏在哪一頁？沒有 TFDA 可查連結真的不行，要不要直接去 TFDA 資料庫用關鍵字反查品牌？",
-        "還是先去 TFDA 資料庫用關鍵字找『娘家 雞精』看看，有沒有正式核可字號能對上？沒有就先不買。",
-        "先把 TFDA 資料庫關鍵字清單列好：品牌名、產品名、申請公司名三路交叉查，避免只用『雞精』關鍵字漏掉。",
-        "先把健康字號找到再說，沒有 TFDA 的直接連結我不會買——會不會藏在品牌公告裡的 PDF？"
+      "優先級": "P0/P1/P2",
+      "標題": "建議標題",
+      "類別": "對應問題的類別",
+      "理由": "為什麼要這樣做",
+      "具體行動": [
+        "【頁面名稱】的【元素位置】（class='.real-class', target='itemXX'）：具體變更"
       ],
-      "impact": "謹慎型使用者因無法驗證產品聲稱的真實性而完全放棄購買（轉換率 0%）。使用者需要自行去 TFDA 網站查詢，增加額外工作負擔。",
-      "evidence": {{
-        "repeated_actions": "點擊「品牌公告」9 次嘗試尋找認證資訊（從重複動作統計：品牌公告=9）",
-        "confusion_signals": "15+ 次提到「健字號」、「TFDA」、「衛福部」、「官方連結」、「不敢買」",
-        "action_sequence_anomaly": "action target 從 item3 變成 gogoro_12_gogoro_11_，可能表示連結失效"
-      }}
-    }},
-    {{
-      "title": "『品牌公告』連結失效或未正確回應",
-      "severity": "CRITICAL",
-      "category": "導航",
-      "description": "使用者連續點擊『品牌公告』連結 9 次，但每次點擊後都沒有看到預期的內容。從 action_trace 可見 target 從 'item3' 變成 'gogoro_12_gogoro_11_'，可能是頁面元素 ID 變化或點擊區域重疊導致。",
-      "user_thoughts": [
-        "那個健康字號到底在哪一頁能直接點進衛福部資料庫？沒有官方連結我真的不敢買。",
-        "先把健康字號找到再說，沒有 TFDA 的直接連結我不會買——會不會藏在品牌公告裡的 PDF？",
-        "晚餐要不要煮清粥配點鹹菜？但在那之前先把品牌公告和檢驗報告翻個底朝天。",
-        "晚餐煮清粥配鹹菜挺剛好，邊吃邊把品牌公告和所有評價翻到最底，看看有沒有報告編號。"
+      "CSS變更": [
+        {{
+          "target_id": "itemXX",
+          "選擇器": ".meaningful-class-name",
+          "選擇器說明": "從 class 中選擇最具語意的一個（不要全部列出）",
+          "屬性": "font-size",
+          "目前值": "14px",
+          "建議值": "16px",
+          "原因": "提升可讀性"
+        }}
       ],
-      "impact": "9 次重複點擊 = 9 次挫折經驗，每次失敗都降低品牌信任度。使用者陷入困惑循環，浪費時間和精力，最終放棄任務。",
-      "evidence": {{
-        "repeated_actions": "連續點擊『品牌公告』9 次（動作 6-13），佔總動作的 64%",
-        "confusion_signals": "從期待「會不會藏在品牌公告裡的 PDF」到決定「把品牌公告翻個底朝天」，顯示使用者堅持尋找但未能成功"
-      }}
-    }},
-    {{
-      "title": "產品聲稱缺乏科學數據支持（『每隻雞 2.5 包』產率）",
-      "severity": "HIGH",
-      "category": "信任建立",
-      "description": "產品聲稱『每隻雞只能做出 2.5 包』作為品質保證，但使用者認為產率『實在低得不太直覺』並要求看到製程說明、實驗數據、第三方檢驗報告來驗證。",
-      "user_thoughts": [
-        "每隻雞只做出 2.5 包的說法有資料來源嗎？也許要去看健字號或檢驗報告細節。",
-        "每包 65ml、說每隻雞只能做出 2.5 包，這產率實在低得不太直覺——是不是因為只取特定部位或長時間低溫萃取？想看到實驗或製程數據。",
-        "每隻雞只做 2.5 包的說法，若一包 65ml，那一隻雞大概只出 160ml 左右，產率感覺很低——有沒有製程或實驗數據佐證？",
-        "每雞只出 2.5 包的說法還是怪怪的，65ml 一包代表一隻雞大概 160ml 產率，有沒有製程或第三方數據佐證？"
-      ],
-      "impact": "謹慎型使用者對產品品質聲稱產生懷疑，降低品牌可信度。需要透明的製程說明和科學數據來建立信任。",
-      "evidence": {{
-        "repeated_actions": "多次在內心想法中質疑產率數據",
-        "confusion_signals": "4+ 次提到「產率低」、「不直覺」、「要數據佐證」"
-      }}
-    }},
-    {{
-      "title": "評價數量不足，缺乏社會證明",
-      "severity": "MEDIUM",
-      "category": "信任建立",
-      "description": "產品只有 2 則評價（皆為 5 星），謹慎型使用者認為樣本數太少，不足以判斷產品品質，想要尋找第三方評價（PTT、Dcard）來驗證。",
-      "user_thoughts": [
-        "兩則五星評價樣本太少，找找 PTT 或 Dcard、Foodpanda 超市留言有沒有更多實測心得。"
-      ],
-      "impact": "缺乏社會證明（social proof）降低購買信心。謹慎型使用者需要更多真實評價才能決策。",
-      "evidence": {{
-        "repeated_actions": "無重複動作，但在內心想法中明確表達需求",
-        "confusion_signals": "提到要去第三方平台尋找評價"
-      }}
+      "預期效果": "量化的預期效果"
     }}
-  ],
-  "recommendations": [
-    {{
-      "priority": "P0 (立即)",
-      "title": "建立官方認證驗證專區",
-      "category": "信任建立",
-      "implementation_difficulty": "中等",
-      "required_resources": "前端工程師 1 人、內容編輯 1 人、2週開發時間",
-      "rationale": "對於高風險感知的謹慎型使用者，官方認證是購買決策的必要條件。缺乏認證入口導致 100% 購買放棄率。",
-      "specific_actions": [
-        "【產品詳情頁】的【頁面頂部區域】（從元素資訊映射查找，若無則標註需開發者確認）：新增『🏅 官方認證資訊』區塊，包含：衛福部健字號（例如：衛署健食字第 AXXXXXX 號），字體大小 16pt，使用高對比色（黑底白字，對比度 7:1）",
-        "【產品詳情頁】的【認證資訊區塊】（target ID 對應的實際 class，如 .ec-certification-block）：提供『查看認證證書 (PDF)』下載連結（按鈕尺寸 48×120px）和『🔗 衛福部 TFDA 資料庫查詢』外部連結（按鈕尺寸 48×180px）",
-        "【產品詳情頁】的【商品規格區域下方】（從元素資訊映射：target='item33' 對應的 class）：新增『SGS 檢驗報告』可展開區塊",
-        "【產品詳情頁】的【產品標題旁】（從元素資訊映射查找實際 class，避免使用猜測的 .product-title-badge）：加入認證徽章圖示（尺寸 32×32px）",
-        "【產品詳情頁】的【所有認證相關元素】（需開發者確認實際 CSS 選擇器）：使用顯眼的設計（高對比色、字體至少 14pt）"
-      ],
-      "expected_impact": "謹慎型使用者轉換率從 0% 提升至 40-60%。減少客服諮詢量 30%（使用者可自助驗證）。建立長期品牌信任，提升回購率。",
-      "persona_alignment": "完全符合謹慎驗證型使用者的核心需求：需要權威機構背書、可驗證的官方資訊、降低購買風險。"
-    }},
-    {{
-      "priority": "P0 (立即)",
-      "title": "修復『品牌公告』連結並優化內容",
-      "category": "導航",
-      "rationale": "連結失效導致 9 次點擊挫折，嚴重破壞使用者體驗和品牌信任。",
-      "specific_actions": [
-        "檢查並修復『品牌公告』連結，確保點擊後正確跳轉到目標頁面",
-        "在品牌公告頁面中明確展示：(1) 公司完整名稱和地址 (2) 所有產品的健字號清單 (3) 第三方認證和獎項",
-        "提供視覺回饋：連結 hover 時變色、點擊時顯示『正在載入品牌資訊...』過渡畫面",
-        "在品牌公告中加入『常見問題 FAQ』區塊，預先回答使用者的驗證需求（如何查證健字號、如何驗證產品真偽）",
-        "使用 breadcrumb 導航，讓使用者知道當前位置（例如：首頁 > 產品頁 > 品牌公告）"
-      ],
-      "expected_impact": "避免重複點擊挫折，提升使用者滿意度。建立品牌專業形象，增強信任感。",
-      "persona_alignment": "謹慎型使用者依賴品牌資訊做驗證，修復此連結是滿足其需求的關鍵步驟。"
-    }},
-    {{
-      "priority": "P1 (短期)",
-      "title": "增加製程透明度說明",
-      "category": "信任建立",
-      "rationale": "使用者對『每隻雞 2.5 包』產率產生質疑，需要科學解釋來建立信任。",
-      "specific_actions": [
-        "新增『🔬 製程與品質保證』折疊區塊，說明：(1) 嚴選台灣土雞（平均 2.5-3kg）(2) 僅取全雞精華，低溫熬煮 3 小時 (3) 蒸氣不回流技術保留營養 (4) 每隻雞萃取液約 160-165ml (5) 每包裝 65ml，故一隻雞 ≈ 2.5 包",
-        "提供製程流程圖或影片連結，讓使用者視覺化理解",
-        "展示第三方檢驗數據：蛋白質含量（X.X g/100ml）、支鏈胺基酸（XXX mg/100ml）、普林含量（XX mg/100ml）",
-        "加入『為什麼產率這麼低？』FAQ，解釋高品質萃取與產率的關係"
-      ],
-      "expected_impact": "消除使用者對產品聲稱的疑慮，提升品質認知。用數據和科學說明建立專業形象。",
-      "persona_alignment": "謹慎型使用者需要詳細、可驗證的資訊來降低不確定性。製程透明度符合其驗證導向的決策模式。"
-    }},
-    {{
-      "priority": "P1 (短期)",
-      "title": "增加社會證明（評價和第三方連結）",
-      "category": "信任建立",
-      "rationale": "2 則評價樣本數不足，謹慎型使用者需要更多真實評價來建立信心。",
-      "specific_actions": [
-        "鼓勵已購買顧客評價：購買後 7 天自動發送評價邀請郵件，提供評價獎勵（紅利點數 50 點）",
-        "整合第三方評價區塊：『💬 顧客評價（共 XXX 則）』，包含本站評價 + PTT/Dcard 討論串連結 + Google 評論",
-        "顯示『✓ 已驗證購買』標記，增加評價可信度",
-        "展示評價分佈（5 星 XX%、4 星 XX%）和關鍵字標籤（『口感好』、『有效』、『新鮮』）",
-        "加入『常見提問』區塊，整理真實顧客的問題和官方回答"
-      ],
-      "expected_impact": "提升社會證明，降低購買風險感知。評價數量增加後，轉換率預期提升 15-25%。",
-      "persona_alignment": "謹慎型使用者重視他人經驗，多元評價來源能增強其購買信心。"
-    }},
-    {{
-      "priority": "P2 (中期)",
-      "title": "提供試用方案降低購買風險",
-      "category": "其他",
-      "rationale": "謹慎型使用者傾向『先試水溫』再決定是否大量購買。",
-      "specific_actions": [
-        "推出『體驗組（10 入）』方案，定價 NT$1,580（平均 NT$158/包），標註『⭐ 適合首次購買，小包裝試用』",
-        "在產品頁面新增購買方案選擇器，清楚對比：體驗組 vs. 家庭組（20 入）vs. 囤貨組（40 入）",
-        "提供『30 天滿意保證』：不滿意可退貨（未開封），運費由公司負擔",
-        "加入『產地溯源』功能：掃描 QR Code 查看雞隻來源牧場資訊",
-        "新增『新鮮配送保證』說明：冷凍宅配，保證 6 個月有效期內到貨"
-      ],
-      "expected_impact": "降低首次購買門檻，吸引謹慎型使用者嘗試。試用後滿意率高則帶動升級購買（20 入或 40 入）。",
-      "persona_alignment": "符合謹慎型使用者『驗證後再決定』的心態，降低一次性大量購買的心理壓力。"
-    }}
-  ],
-  "persona_insights": {{
-    "risk_perception_manifestation": "高風險感知體現在：(1) 15+ 次提到需要官方驗證（健字號、TFDA、衛福部）(2) 質疑產品聲稱並要求科學數據 (3) 尋找第三方評價（PTT、Dcard）(4) 未驗證就不購買的堅決態度",
-    "self_efficacy_manifestation": "低自我效能體現在：(1) 依賴外部權威（衛福部、TFDA）做決策 (2) 需要詳細指引和明確標示 (3) 反覆確認相同資訊（重複點擊）(4) 面對資訊不足時選擇放棄而非自行判斷",
-    "strategy_effectiveness": "驗證導向策略執行失敗。使用者嘗試透過『商品規格』、『詳細說明』、『品牌公告』來驗證產品安全性，但網站未提供所需的官方認證資訊，導致任務無法完成。策略本身正確，但網站設計不支持。",
-    "unmet_needs": [
-      "需要健字號核可編號和 TFDA 資料庫查詢連結來驗證官方認證",
-      "需要認證證書 PDF 和檢驗報告下載來確認產品安全性",
-      "需要詳細的製程說明和科學數據來理解產品聲稱（『每隻雞 2.5 包』）",
-      "需要更多真實評價和第三方討論來建立社會證明",
-      "需要試用方案來降低首次購買的風險",
-      "需要產地溯源和品質保證機制來建立長期信任"
-    ]
-  }},
-  "comparison_notes": {{
-    "efficiency_vs_cautious": "效率型使用者（如 Mr. Chen）需要『快速、明確的操作回饋』，主要問題是視覺回饋不足導致重複點擊『加入購物車』2 次。謹慎型使用者（如 Mrs. Wang）需要『詳細、可驗證的安全資訊』，主要問題是缺乏官方認證入口和製程透明度，導致完全放棄購買。兩種 persona 的核心需求完全不同：效率型重視『速度』，謹慎型重視『安全』。改善策略也需分別針對：效率型需要增強回饋機制，謹慎型需要建立信任系統。"
-  }},
-  "action_plan": {{
-    "short_term": {{
-      "timeframe": "1-2週內",
-      "actions": [
-        {{
-          "title": "建立官方認證驗證專區",
-          "priority": "P0",
-          "implementation_difficulty": "中等",
-          "required_resources": "前端工程師 1 人、內容編輯 1 人、2週開發時間",
-          "quick_win": true,
-          "rationale": "立即解決謹慎型使用者的核心痛點"
-        }},
-        {{
-          "title": "修復品牌公告連結",
-          "priority": "P0",
-          "implementation_difficulty": "簡單",
-          "required_resources": "前端工程師 0.5 人、1週開發時間",
-          "quick_win": true,
-          "rationale": "技術修復，快速消除重複點擊挫折"
-        }}
-      ],
-      "success_metrics": [
-        "P0 問題修復率 100%",
-        "轉換率從 0% 提升至 30-40%",
-        "重複點擊次數減少 80%"
-      ],
-      "expected_impact": "立即解決導致任務失敗的關鍵障礙，讓使用者能夠完成驗證流程並建立基本信任",
-      "risks_and_challenges": [
-        "需要取得健字號證書和檢驗報告的電子檔",
-        "連結修復可能涉及底層架構問題"
-      ]
-    }},
-    "mid_term": {{
-      "timeframe": "1-2個月內",
-      "actions": [
-        {{
-          "title": "增加製程透明度說明",
-          "priority": "P1",
-          "implementation_difficulty": "中等",
-          "required_resources": "設計師 1 人、內容編輯 1 人、影片製作（外包）、1個月時間",
-          "rationale": "進一步增強品牌專業形象和產品可信度"
-        }},
-        {{
-          "title": "增加社會證明機制",
-          "priority": "P1",
-          "implementation_difficulty": "中等",
-          "required_resources": "後端+前端工程師各 1 人、行銷 0.5 人、1.5個月時間",
-          "rationale": "建立長期信任機制，提升持續轉換率"
-        }}
-      ],
-      "success_metrics": [
-        "評價數量從 2 則增加至 50+ 則",
-        "轉換率提升至 50-60%",
-        "品牌信任度評分提升 30%"
-      ],
-      "expected_impact": "建立完整的信任生態系統，從官方認證擴展到製程透明度和社會證明",
-      "risks_and_challenges": [
-        "製程影片製作需要協調生產端拍攝",
-        "評價收集需要時間累積（1-2個月）"
-      ]
-    }},
-    "long_term": {{
-      "timeframe": "3-6個月內",
-      "actions": [
-        {{
-          "title": "建立試用方案和風險降低機制",
-          "priority": "P2",
-          "implementation_difficulty": "困難",
-          "required_resources": "產品經理+後端+前端工程師各 1 人、物流協調、3個月時間",
-          "rationale": "降低首次購買門檻，建立長期客戶關係"
-        }},
-        {{
-          "title": "建立產地溯源系統",
-          "priority": "P2",
-          "implementation_difficulty": "困難",
-          "required_resources": "後端工程師 2 人、供應鏈協調、4-6個月時間",
-          "rationale": "建立行業領先的透明度標準"
-        }}
-      ],
-      "success_metrics": [
-        "試用組轉換率（試用後購買） > 70%",
-        "整體轉換率達 60-70%",
-        "客戶終身價值提升 50%"
-      ],
-      "expected_impact": "建立行業領先的信任標準和長期品牌護城河",
-      "risks_and_challenges": [
-        "試用方案可能影響利潤率",
-        "產地溯源需要供應鏈全面配合"
-      ]
-    }},
-    "overall_impact_summary": "透過短期（P0）、中期（P1）、長期（P2）的漸進式改善，預期可將轉換率從 0% 逐步提升至 60-70%，同時建立品牌信任生態系統和行業領先地位。",
-    "persona_specific_note": "此行動計劃專為謹慎驗證型使用者設計，每個階段針對其核心需求：短期滿足驗證需求，中期建立多層次信任，長期降低風險感知並建立長期關係。"
-  }}
+  ]
 }}
+```
 
----
+**檢查清單**：
+✅ 所有點擊次數來自精確統計數據？
+✅ CSS 選擇器來自元素資訊映射的真實 class？
+✅ 每個問題都引用了 3+ 條使用者想法？
+✅ 建議夠具體（有實際的 CSS 屬性和數值）？
 
-# 最後提醒
-
-1. **至少找出 3-5 個具體問題**，不要只有一個泛化的「資訊分散」
-2. **每個問題引用 3-5 條使用者想法**，用原文引用不要改寫
-3. **🚨🚨🚨 數字準確性（最高優先級）**：
-   - **只能使用「精確統計數據」區塊中提供的數字**
-   - 當說「點擊 X 次」時，X 必須來自 `target_click_count` 或 `keyword_frequency`
-   - 如果統計中顯示「購物車: 2」，就只能說「點擊購物車 2 次」，**絕對不能**說成 5 次或其他數字
-   - 如果不確定具體次數，使用「多次」、「數次」等模糊詞，**不要編造具體數字**
-4. **建議要非常具體**（例如：「在產品頁面頂部新增...」而不是「改善資訊架構」）
-5. **嚴重程度要準確**：導致任務失敗 = CRITICAL，嚴重影響體驗 = HIGH
-6. **必須包含 action_plan**：整合所有建議到短期/中期/長期行動計劃中
-7. **🔴 關鍵提醒：每條 specific_actions 必須使用格式【頁面名稱】的【元素位置】：具體變更內容**
-   - 例如：「【產品詳情頁】的【產品標題區塊】(.product-title)：將字體大小從 12pt 調整為 16pt」
-   - 不可以只寫：「將網站字體大小調整為至少 14pt」
-   - 必須明確標示頁面、元素、具體數值
-8. **🔴🔴 CSS 選擇器必須來自「元素資訊映射」中的實際 class/id**
-   - 在「元素資訊映射」中查找對應 target ID 的 class 和 id
-   - 使用實際的 class 名稱（如 `.ec-product-detail__title`），而不是猜測的通用名稱（如 `.product-title`）
-   - 如果沒有對應資訊，標註「需開發者確認實際 CSS 選擇器」
-   - **絕對禁止**捏造或猜測 class 名稱
-
-請直接輸出 JSON，確保格式正確。
+請直接輸出 JSON。
 """
         return prompt
 
@@ -831,104 +438,72 @@ class LLMUXAnalyzer:
             }
 
 
-def generate_markdown_report(analysis: Dict[str, Any], persona_info: Dict, run_dir: Path) -> str:
+# ==================== Report Generator ====================
+
+def generate_markdown_report(analysis: Dict[str, Any], persona: PersonaProfile, run_dir: Path) -> str:
     """根據 LLM 分析結果產生 Markdown 報告"""
 
-    # 提取測試元數據
     test_metadata = analysis.get('test_metadata', {})
 
-    report = f"""# UX 深度分析報告（LLM 智能分析）
+    report = f"""# UX 深度分析報告
 
-## 📋 測試信息
+## 📋 測試資訊
 
 | 項目 | 內容 |
 |------|------|
 | **測試目錄** | {test_metadata.get('run_directory', run_dir.name)} |
 | **Persona 檔案** | {test_metadata.get('persona_file', 'N/A')} |
-| **Persona 姓名** | {test_metadata.get('persona_name', persona_info.get('name', 'N/A'))} |
-| **Persona 類型** | {test_metadata.get('persona_type', persona_info.get('type', 'N/A'))} |
+| **Persona 姓名** | {test_metadata.get('persona_name', persona.name)} |
+| **Persona 類型** | {test_metadata.get('persona_type', persona.persona_type)} |
 | **分析時間** | {test_metadata.get('analysis_timestamp', datetime.now().isoformat())} |
 | **總操作次數** | {test_metadata.get('total_actions', 'N/A')} |
 | **總思考次數** | {test_metadata.get('total_thoughts', 'N/A')} |
-| **總反思次數** | {test_metadata.get('total_reflections', 'N/A')} |
-| **分析模型** | GPT-4o |
 
 ---
 
 ## 📊 執行摘要
 
 ### 任務完成狀態
-- **完成**: {'✅ 是' if analysis.get('executive_summary', {}).get('task_completed') else '❌ 否'}
-- **原因**: {analysis.get('executive_summary', {}).get('completion_reason', 'N/A')}
+- **完成**: {'✅ 是' if analysis.get('執行摘要', {}).get('任務完成') else '❌ 否'}
+- **原因**: {analysis.get('執行摘要', {}).get('完成原因', 'N/A')}
 
 ### 關鍵洞察
-> {analysis.get('executive_summary', {}).get('key_insight', 'N/A')}
+> {analysis.get('執行摘要', {}).get('關鍵洞察', 'N/A')}
 
 ---
 
-## 👤 Persona 特徵詳情
-
-- **姓名**: {test_metadata.get('persona_name', persona_info.get('name', 'N/A'))}
-- **類型**: {test_metadata.get('persona_type', persona_info.get('type', 'N/A'))}
-- **關鍵特徵**:
-  - 風險感知: {test_metadata.get('risk_perception', persona_info.get('risk_perception', 'N/A'))}
-  - 自我效能: {test_metadata.get('self_efficacy', persona_info.get('self_efficacy', 'N/A'))}
-  - 工作記憶: {test_metadata.get('working_memory', persona_info.get('working_memory', 'N/A'))}
-  - 任務策略: {test_metadata.get('strategy', persona_info.get('strategy', 'N/A'))}
-
----
-
-## 🔍 行為模式分析
-
-"""
-
-    for i, pattern in enumerate(analysis.get('behavioral_patterns', []), 1):
-        report += f"""
-### 模式 {i}: {pattern.get('title', pattern.get('pattern', 'Unknown'))}
-
-**證據**:
-{pattern.get('evidence', 'N/A')}
-
-**解讀**:
-{pattern.get('interpretation', 'N/A')}
-
----
-"""
-
-    report += """
 ## 🚨 發現的 UX 問題
 
 """
 
-    for i, issue in enumerate(analysis.get('ux_issues', []), 1):
+    for i, issue in enumerate(analysis.get('UX問題', []), 1):
         severity_emoji = {
             'CRITICAL': '🔴',
             'HIGH': '🟠',
             'MEDIUM': '🟡',
             'LOW': '🟢'
-        }.get(issue.get('severity', 'MEDIUM'), '⚪')
+        }.get(issue.get('嚴重程度', 'MEDIUM'), '⚪')
 
         report += f"""
-### {severity_emoji} 問題 {i}: {issue.get('title', 'Unknown')}
+### {severity_emoji} 問題 {i}: {issue.get('標題', 'Unknown')}
 
-- **嚴重程度**: {issue.get('severity', 'N/A')}
-- **類別**: {issue.get('category', 'N/A')}
+- **嚴重程度**: {issue.get('嚴重程度', 'N/A')}
+- **類別**: {issue.get('類別', 'N/A')}
 
 **描述**:
-{issue.get('description', 'N/A')}
+{issue.get('描述', 'N/A')}
 
 **使用者內心想法**:
 """
-        for thought in issue.get('user_thoughts', []):
+        for thought in issue.get('使用者想法', []):
             report += f'> "{thought}"\n\n'
 
         report += f"""
 **影響**:
-{issue.get('impact', 'N/A')}
+{issue.get('影響', 'N/A')}
 
 **證據**:
-- 重複動作: {issue.get('evidence', {}).get('repeated_actions', 'N/A')}
-- 困惑訊號: {issue.get('evidence', {}).get('confusion_signals', 'N/A')}
+{issue.get('證據', 'N/A')}
 
 ---
 """
@@ -938,215 +513,91 @@ def generate_markdown_report(analysis: Dict[str, Any], persona_info: Dict, run_d
 
 """
 
-    priority_order = {'P0 (立即)': 1, 'P1 (短期)': 2, 'P2 (中期)': 3}
+    priority_order = {'P0': 1, 'P1': 2, 'P2': 3}
     recommendations = sorted(
-        analysis.get('recommendations', []),
-        key=lambda x: priority_order.get(x.get('priority', 'P2 (中期)'), 999)
+        analysis.get('改善建議', []),
+        key=lambda x: priority_order.get(x.get('優先級', 'P2'), 999)
     )
 
     for i, rec in enumerate(recommendations, 1):
         priority_emoji = {
-            'P0 (立即)': '🔥',
-            'P1 (短期)': '⚡',
-            'P2 (中期)': '📅'
-        }.get(rec.get('priority', 'P2 (中期)'), '📌')
+            'P0': '🔥',
+            'P1': '⚡',
+            'P2': '📅'
+        }.get(rec.get('優先級', 'P2'), '📌')
 
         report += f"""
-### {priority_emoji} 建議 {i}: {rec.get('title', 'Unknown')}
+### {priority_emoji} 建議 {i}: {rec.get('標題', 'Unknown')}
 
-- **優先級**: {rec.get('priority', 'N/A')}
-- **類別**: {rec.get('category', 'N/A')}
-- **實施難度**: {rec.get('implementation_difficulty', 'N/A')}
-- **所需資源**: {rec.get('required_resources', 'N/A')}
+- **優先級**: {rec.get('優先級', 'N/A')}
+- **類別**: {rec.get('類別', 'N/A')}
 
 **理由**:
-{rec.get('rationale', 'N/A')}
+{rec.get('理由', 'N/A')}
 
 **具體行動**:
 """
-        for action in rec.get('specific_actions', []):
+        for action in rec.get('具體行動', []):
             report += f"- {action}\n"
+
+        # CSS 變更清單
+        if rec.get('CSS變更'):
+            report += "\n**CSS 變更明細**:\n\n"
+            for idx, css_change in enumerate(rec['CSS變更'], 1):
+                target_id = css_change.get('target_id', 'N/A')
+                selector = css_change.get('選擇器', 'N/A')
+                property_name = css_change.get('屬性', 'N/A')
+                current = css_change.get('目前值', 'N/A')
+                recommended = css_change.get('建議值', 'N/A')
+                reason = css_change.get('原因', 'N/A')
+                
+                report += f"""
+<details>
+<summary><strong>變更 {idx}</strong>: <code>{property_name}</code> ({target_id})</summary>
+
+- **Target ID**: `{target_id}`
+- **CSS 選擇器**: `{selector}`
+- **屬性**: `{property_name}`
+- **目前值**: {current}
+- **建議值**: {recommended}
+- **原因**: {reason}
+
+**使用方式**:
+```css
+{selector} {{
+  {property_name}: {recommended};
+}}
+```
+
+</details>
+
+"""
 
         report += f"""
 **預期效果**:
-{rec.get('expected_impact', 'N/A')}
-
-**Persona 對齊**:
-{rec.get('persona_alignment', 'N/A')}
+{rec.get('預期效果', 'N/A')}
 
 ---
-"""
-
-    report += f"""
-## 🎯 Persona 洞察
-
-### 風險感知體現
-{analysis.get('persona_insights', {}).get('risk_perception_manifestation', 'N/A')}
-
-### 自我效能影響
-{analysis.get('persona_insights', {}).get('self_efficacy_manifestation', 'N/A')}
-
-### 任務策略有效性
-{analysis.get('persona_insights', {}).get('strategy_effectiveness', 'N/A')}
-
-### 未被滿足的需求
-"""
-    for need in analysis.get('persona_insights', {}).get('unmet_needs', []):
-        report += f"- {need}\n"
-
-    if analysis.get('comparison_notes', {}).get('efficiency_vs_cautious'):
-        report += f"""
----
-
-## 📈 Persona 類型對比
-
-{analysis['comparison_notes']['efficiency_vs_cautious']}
-"""
-
-    # 新增：UX 改進行動計劃
-    if 'action_plan' in analysis:
-        report += """
----
-
-## 🚀 UX 改進行動計劃
-
-此行動計劃整合了所有 UX 問題和改善建議，按時間軸組織成可執行的行動項目。
-
-"""
-        action_plan = analysis['action_plan']
-
-        # 短期行動
-        if 'short_term' in action_plan:
-            short_term = action_plan['short_term']
-            report += f"""
-### 🔥 短期行動（{short_term.get('timeframe', '1-2週內')}）
-
-**目標**: {short_term.get('expected_impact', 'N/A')}
-
-**行動項目**:
-"""
-            for i, action in enumerate(short_term.get('actions', []), 1):
-                quick_win_badge = ' 🎯 Quick Win' if action.get('quick_win') else ''
-                report += f"""
-{i}. **{action.get('title', 'Unknown')}**{quick_win_badge}
-   - 優先級: {action.get('priority', 'N/A')}
-   - 實施難度: {action.get('implementation_difficulty', 'N/A')}
-   - 所需資源: {action.get('required_resources', 'N/A')}
-   - 原因: {action.get('rationale', 'N/A')}
-"""
-
-            report += f"""
-**成功指標**:
-"""
-            for metric in short_term.get('success_metrics', []):
-                report += f"- {metric}\n"
-
-            report += f"""
-**風險與挑戰**:
-"""
-            for risk in short_term.get('risks_and_challenges', []):
-                report += f"- {risk}\n"
-
-        # 中期行動
-        if 'mid_term' in action_plan:
-            mid_term = action_plan['mid_term']
-            report += f"""
----
-
-### ⚡ 中期行動（{mid_term.get('timeframe', '1-2個月內')}）
-
-**目標**: {mid_term.get('expected_impact', 'N/A')}
-
-**行動項目**:
-"""
-            for i, action in enumerate(mid_term.get('actions', []), 1):
-                report += f"""
-{i}. **{action.get('title', 'Unknown')}**
-   - 優先級: {action.get('priority', 'N/A')}
-   - 實施難度: {action.get('implementation_difficulty', 'N/A')}
-   - 所需資源: {action.get('required_resources', 'N/A')}
-   - 原因: {action.get('rationale', 'N/A')}
-"""
-
-            report += f"""
-**成功指標**:
-"""
-            for metric in mid_term.get('success_metrics', []):
-                report += f"- {metric}\n"
-
-            report += f"""
-**風險與挑戰**:
-"""
-            for risk in mid_term.get('risks_and_challenges', []):
-                report += f"- {risk}\n"
-
-        # 長期行動
-        if 'long_term' in action_plan:
-            long_term = action_plan['long_term']
-            report += f"""
----
-
-### 📅 長期行動（{long_term.get('timeframe', '3-6個月內')}）
-
-**目標**: {long_term.get('expected_impact', 'N/A')}
-
-**行動項目**:
-"""
-            for i, action in enumerate(long_term.get('actions', []), 1):
-                report += f"""
-{i}. **{action.get('title', 'Unknown')}**
-   - 優先級: {action.get('priority', 'N/A')}
-   - 實施難度: {action.get('implementation_difficulty', 'N/A')}
-   - 所需資源: {action.get('required_resources', 'N/A')}
-   - 原因: {action.get('rationale', 'N/A')}
-"""
-
-            report += f"""
-**成功指標**:
-"""
-            for metric in long_term.get('success_metrics', []):
-                report += f"- {metric}\n"
-
-            report += f"""
-**風險與挑戰**:
-"""
-            for risk in long_term.get('risks_and_challenges', []):
-                report += f"- {risk}\n"
-
-        # 整體影響摘要
-        if 'overall_impact_summary' in action_plan:
-            report += f"""
----
-
-### 📊 整體影響預估
-
-{action_plan['overall_impact_summary']}
-
-"""
-
-        if 'persona_specific_note' in action_plan:
-            report += f"""
-**針對 {persona_info['name']} 的特別說明**:
-
-{action_plan['persona_specific_note']}
 """
 
     report += f"""
 ---
 
 **報告產生時間**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-**分析工具**: UX Analyzer LLM v2.0 (OpenAI GPT-4) - Enhanced with Action Plan
+**分析工具**: UX Analyzer LLM Deep Analysis v1.0
 """
 
     return report
 
 
+# ==================== Main ====================
+
 def main():
-    parser = argparse.ArgumentParser(description='使用 LLM 智能分析 UX 測試結果')
+    parser = argparse.ArgumentParser(description='UX 分析器 - 純 LLM 深度分析')
     parser.add_argument('--run-dir', required=True, help='測試結果目錄')
     parser.add_argument('--persona', required=True, help='Persona 檔案路徑')
-    parser.add_argument('--api-key', help='OpenAI API key（或在 .env 中設定 OPENAI_API_KEY）')
-    parser.add_argument('--output', help='輸出報告路徑（預設: run-dir/ux_analysis_llm.md）')
+    parser.add_argument('--api-key', help='OpenAI API key（或在 .env 中設定）')
+    parser.add_argument('--output', help='輸出報告路徑')
 
     args = parser.parse_args()
 
@@ -1155,20 +606,18 @@ def main():
     action_trace_file = run_dir / 'action_trace.json'
     persona_file = Path(args.persona)
 
-    # 檢查檔案存在
+    # 檢查檔案
     if not memory_trace_file.exists():
         print(f"❌ 找不到 memory_trace.json: {memory_trace_file}")
         return
-
     if not action_trace_file.exists():
         print(f"❌ 找不到 action_trace.json: {action_trace_file}")
         return
-
     if not persona_file.exists():
         print(f"❌ 找不到 persona 檔案: {persona_file}")
         return
 
-    print(f"📊 開始 LLM 智能分析...")
+    print(f"📊 開始 LLM 深度分析...")
     print(f"   測試目錄: {run_dir}")
     print(f"   Persona: {persona_file}")
 
@@ -1179,21 +628,9 @@ def main():
     with open(action_trace_file, 'r', encoding='utf-8') as f:
         action_trace = json.load(f)
 
-    persona_text = persona_file.read_text(encoding='utf-8')
-
-    # 解析 persona 基本資訊
-    from ux_analyzer import PersonaProfile
-    persona_profile = PersonaProfile(str(persona_file))
-    persona_info = {
-        'name': persona_profile.name,
-        'type': persona_profile.persona_type,
-        'risk_perception': persona_profile.risk_perception,
-        'self_efficacy': persona_profile.self_efficacy,
-        'working_memory': persona_profile.working_memory,
-        'strategy': persona_profile.strategy
-    }
-
-    print(f"\n👤 Persona: {persona_info['name']} ({persona_info['type']})")
+    # 解析 persona
+    persona = PersonaProfile(str(persona_file))
+    print(f"\n👤 Persona: {persona.name} ({persona.persona_type})")
 
     # 初始化 LLM 分析器
     try:
@@ -1207,13 +644,14 @@ def main():
         analysis_result = analyzer.analyze_test_results(
             memory_trace=memory_trace,
             action_trace=action_trace,
-            persona_text=persona_text,
-            persona_info=persona_info,
+            persona=persona,
             persona_file=persona_file.name,
             run_dir=run_dir.name
         )
     except Exception as e:
         print(f"\n❌ 分析失敗: {e}")
+        import traceback
+        traceback.print_exc()
         return
 
     # 檢查是否有錯誤
@@ -1231,7 +669,7 @@ def main():
 
     # 產生 Markdown 報告
     md_output = str(run_dir / 'ux_analysis_llm.md')
-    report = generate_markdown_report(analysis_result, persona_info, run_dir)
+    report = generate_markdown_report(analysis_result, persona, run_dir)
     Path(md_output).write_text(report, encoding='utf-8')
     print(f"✅ Markdown 報告已產生: {md_output}")
 
@@ -1240,13 +678,13 @@ def main():
     print("LLM 分析摘要")
     print("="*60)
 
-    summary = analysis_result.get('executive_summary', {})
-    print(f"\n任務完成: {'✅ 是' if summary.get('task_completed') else '❌ 否'}")
-    print(f"原因: {summary.get('completion_reason', 'N/A')}")
-    print(f"\n關鍵洞察: {summary.get('key_insight', 'N/A')}")
+    summary = analysis_result.get('執行摘要', {})
+    print(f"\n任務完成: {'✅ 是' if summary.get('任務完成') else '❌ 否'}")
+    print(f"原因: {summary.get('完成原因', 'N/A')}")
+    print(f"\n關鍵洞察: {summary.get('關鍵洞察', 'N/A')}")
 
-    print(f"\n發現 {len(analysis_result.get('ux_issues', []))} 個 UX 問題")
-    print(f"產生 {len(analysis_result.get('recommendations', []))} 項改善建議")
+    print(f"\n發現 {len(analysis_result.get('UX問題', []))} 個 UX 問題")
+    print(f"產生 {len(analysis_result.get('改善建議', []))} 項改善建議")
 
     print(f"\n📄 完整報告請見: {md_output}")
 

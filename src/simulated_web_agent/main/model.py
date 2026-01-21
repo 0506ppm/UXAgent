@@ -161,10 +161,10 @@ class AgentPolicy(BasePolicy):
         if self.agent.memory.timestamp != 0:  # make parallel
             await asyncio.gather(
                 self.agent.feedback(observation["html"]),
-                self.agent.perceive(observation["html"]),
+                self.agent.perceive(observation["html"], cart_changes=observation.get("cart_changes", []))
             )
         else:
-            await self.agent.perceive(observation["html"])
+            await self.agent.perceive(observation["html"], cart_changes=observation.get("cart_changes", []))
         if self.slow_loop_task is None:
             self.slow_loop_task = asyncio.create_task(self.slow_loop())
         # if self.agent.memory.timestamp != 0:

@@ -66,7 +66,19 @@ class Agent:
         self.intent = intent
         self.current_plan = None
 
-    async def perceive(self, environment):
+    async def perceive(self, environment, cart_changes=None):
+
+        # 把 cart_changes 加入 environment
+        if isinstance(environment, dict):
+            env_to_send = environment.copy()
+            if cart_changes is not None:
+                env_to_send["cart_changes"] = cart_changes
+        else:
+            env_to_send = {
+                "html": environment,
+                "cart_changes": cart_changes or []
+            }
+            
         environment_full = json.dumps(environment)
 
         for denied_word in self.deny_list:
@@ -85,7 +97,7 @@ class Agent:
             await self.memory.add_memory_piece(
                 Observation(result["observations"][0], self.memory, environment)
             )
-
+    
     @staticmethod
     def format_memories(memories: list[MemoryPiece], sort_by_kind=True) -> list[str]:
         # sort by kind and timestamp
@@ -221,25 +233,50 @@ class Agent:
         logger.info("wondering ...")
         memories = self.memory.memories[-50:]  # get the last 50 memories
         memories = self.format_memories(memories)
-        # with LogApiCall():
+
+        wonder_input = {
+        "persona": self.persona,
+        "memories": memories,
+        "intent": self.intent,
+        }
+        print("===== WONDER INPUT BEGIN =====")
+        print(json.dumps(wonder_input, indent=2, ensure_ascii=False))
+        print("===== WONDER INPUT END =====")
+
         resp = await async_chat(
             [
                 {"role": "system", "content": WONDER_PROMPT},
                 {
                     "role": "user",
-                    "content": json.dumps(
-                        {
-                            "persona": self.persona,
-                            "memories": memories,
-                            "intent": self.intent,
-                        }
-                    ),
+                    "content": json.dumps(wonder_input),
                 },
             ],
             log=False,
             json_mode=True,
             model="large",
         )
+        #     # with LogApiCall():
+        # resp = await async_chat(
+        #     [
+        #         {"role": "system", "content": WONDER_PROMPT},
+        #         {
+        #             "role": "user",
+        #             "content": json.dumps(
+        #                 {
+        #                     "persona": self.persona,
+        #                     "memories": memories,
+        #                     "intent": self.intent,
+        #                 }
+        #                 print("===== WONDER INPUT BEGIN =====")
+        #                 print(json.dumps(wonder_input, indent=2, ensure_ascii=False))
+        #                 print("===== WONDER INPUT END =====")
+        #             ),
+        #         },
+        #     ],
+        #     log=False,
+        #     json_mode=True,
+        #     model="large",
+        # )
         resp = json.loads(resp)
         logger.info("wondering: %s", resp)
         for thought in resp["thoughts"]:
